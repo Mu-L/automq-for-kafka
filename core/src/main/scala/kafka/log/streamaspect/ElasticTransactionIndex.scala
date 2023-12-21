@@ -31,7 +31,7 @@ class ElasticTransactionIndex(__file: File, streamSliceSupplier: StreamSliceSupp
   extends TransactionIndex(startOffset, __file) {
 
   var stream: ElasticStreamSlice = streamSliceSupplier.get()
-  @volatile private var lastAppend: CompletableFuture[_] = CompletableFuture.completedFuture(null)
+  @volatile private var lastAppend: CompletableFuture[Long] = CompletableFuture.completedFuture(-1)
   private var closed = false
 
   override def append(abortedTxn: AbortedTxn): Unit = {
@@ -44,9 +44,21 @@ class ElasticTransactionIndex(__file: File, streamSliceSupplier: StreamSliceSupp
     }
     lastOffset = Some(abortedTxn.lastOffset)
     lastAppend = stream.append(RawPayloadRecordBatch.of(abortedTxn.buffer.duplicate()))
+      .thenApply(_ => abortedTxn.lastStableOffset)
+  }
+
+  def maybeAppend(abortedTxn: AbortedTxn): Unit = {
+    lastOffset.foreach { offset =>
+      if (offset < abortedTxn.lastOffset)
+        append(abortedTxn)
+    }
   }
 
   override def flush(): Unit = {
+    lastAppend.get()
+  }
+
+  private[log] def lastStableOffsetInStream: Long = {
     lastAppend.get()
   }
 
@@ -73,6 +85,29 @@ class ElasticTransactionIndex(__file: File, streamSliceSupplier: StreamSliceSupp
 
   override def truncateTo(offset: Long): Unit = {
     throw new UnsupportedOperationException()
+  }
+
+
+  /**
+   * Fetch the last entry from remote and update the last offset in memory.
+   * @return the last entry.
+   */
+  def forceFetchAndMaybeUpdateLastOffset(): AbortedTxn = {
+    val nextOffset = stream.nextOffset()
+    if (nextOffset <= 0) {
+      new AbortedTxn(-1, -1, -1, -1)
+    } else {
+      val rst = stream.fetch(nextOffset - AbortedTxn.TotalSize, nextOffset).get()
+      val records = rst.recordBatchList()
+      if (records.size() == 0) {
+        throw new IllegalStateException(s"fail to fetch last entry from txn stream $stream with offset [${nextOffset - AbortedTxn.TotalSize}, $nextOffset)")
+      }
+      val buffer = records.get(0).rawPayload()
+      val abortedTxn = new AbortedTxn(buffer)
+      lastOffset = Some(abortedTxn.lastOffset)
+      rst.free()
+      abortedTxn
+    }
   }
 
   override protected def iterator(allocate: () => ByteBuffer = () => ByteBuffer.allocate(AbortedTxn.TotalSize)): Iterator[(AbortedTxn, Int)] = {

@@ -51,7 +51,15 @@ class ElasticProducerStateManager(
     tm
   }
 
-  override protected def loadFromSnapshot(logStartOffset: Long, currentTime: Long): Unit = {
+  def lastSnapshotOffset(): Long = {
+    if (snapshotsMap.nonEmpty) {
+      snapshotsMap.keys.max
+    } else {
+      0L
+    }
+  }
+
+  override def loadFromSnapshot(logStartOffset: Long, currentTime: Long): Unit = {
     while (true) {
       latestSnapshotFile match {
         case Some(snapshot) =>

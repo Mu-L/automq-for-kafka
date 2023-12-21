@@ -731,6 +731,23 @@ class ProducerStateManager(
     }
   }
 
+  // AutoMQ for Kafka inject start
+  def reload(logStartOffset: Long, logEndOffset: Long, currentTimeMs: Long): Unit = {
+    if (logEndOffset != mapEndOffset) {
+      producers.clear()
+      ongoingTxns.clear()
+      updateOldestTxnTimestamp()
+
+      // since we assume that the offset is less than or equal to the high watermark, it is
+      // safe to clear the unreplicated transactions
+      unreplicatedTxns.clear()
+      loadFromSnapshot(logStartOffset, currentTimeMs)
+    } else {
+      onLogStartOffsetIncremented(logStartOffset)
+    }
+  }
+  // AutoMQ for Kafka inject end
+
   def prepareUpdate(producerId: Long, origin: AppendOrigin): ProducerAppendInfo = {
     val currentEntry = lastEntry(producerId).getOrElse(ProducerStateEntry.empty(producerId))
     new ProducerAppendInfo(topicPartition, producerId, currentEntry, origin)
@@ -887,6 +904,8 @@ class ProducerStateManager(
     unreplicatedTxns.put(completedTxn.firstOffset, txnMetadata)
     updateOldestTxnTimestamp()
   }
+
+  def haveOngoingTxns: Boolean = !ongoingTxns.isEmpty
 
   @threadsafe
   def deleteSnapshotsBefore(offset: Long): Unit = {

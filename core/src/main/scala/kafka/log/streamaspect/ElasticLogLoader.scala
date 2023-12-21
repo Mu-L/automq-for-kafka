@@ -22,8 +22,8 @@ import kafka.server.LogOffsetMetadata
 import kafka.server.epoch.LeaderEpochFileCache
 import kafka.utils.Logging
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.common.errors.InvalidOffsetException
-import org.apache.kafka.common.utils.Time
+import org.apache.kafka.common.errors.{InvalidOffsetException, KafkaStorageException}
+import org.apache.kafka.common.utils.{Time, Utils}
 
 import java.io.File
 import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, ConcurrentMap}
@@ -32,6 +32,7 @@ import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, ConcurrentMap
  * ref. LogLoader
  */
 class ElasticLogLoader(logMeta: ElasticLogMeta,
+                       partitionMeta: ElasticPartitionMeta,
                        segments: LogSegments,
                        logSegmentsManager: ElasticLogSegmentManager,
                        streamSliceManager: ElasticStreamSliceManager,
@@ -133,6 +134,40 @@ class ElasticLogLoader(logMeta: ElasticLogMeta,
     bytesTruncated
   }
 
+
+  private def freshEntryAndGetStartRecoveryOffset(): Long = {
+    if (segments.isEmpty) {
+      return 0L
+    }
+
+    val segment = segments.lastSegment.get.asInstanceOf[ElasticLogSegment]
+
+    segment.timeIdx.forceFetchAndMaybeUpdateLastEntry()
+    val lastAbortedTxn = segment.txnIndex.forceFetchAndMaybeUpdateLastOffset()
+    val lastStableOffset = if (lastAbortedTxn.lastStableOffset < 0) {
+      segment.baseOffset
+    } else {
+      lastAbortedTxn.lastStableOffset
+    }
+    val txnRecoveryOffset = Utils.max(partitionMeta.getTxnRecoveryRefOffset, lastStableOffset)
+    val lastSnapshotOffset = producerStateManager.lastSnapshotOffset()
+
+    Utils.max(0, Utils.min(txnRecoveryOffset, lastSnapshotOffset))
+  }
+
+  /** return the log end offset if valid */
+  def getLogEndOffset(): Option[Long] = {
+    if (segments.nonEmpty) {
+      val logEndOffset = segments.lastSegment.get.readNextOffset
+      if (logEndOffset >= logStartOffsetCheckpoint)
+        Some(logEndOffset)
+      else {
+        // wont' happen
+        throw new IllegalStateException()
+      }
+    } else None
+  }
+
   /**
    * Recover the log segments (if there was an unclean shutdown). Ensures there is at least one
    * active segment, and returns the updated recovery point and next offset after recovery. Along
@@ -146,6 +181,79 @@ class ElasticLogLoader(logMeta: ElasticLogMeta,
    * @throws LogSegmentOffsetOverflowException if we encountered a legacy segment with offset overflow
    */
   private[log] def recoverLog(): (Long, Long) = {
+    // If we have the clean shutdown marker, skip recovery.
+    if (!hadCleanShutdown) {
+      val unflushed = segments.values(recoveryPointCheckpoint, Long.MaxValue)
+      val numUnflushed = unflushed.size
+      val unflushedIter = unflushed.iterator
+      var truncated = false
+      var numFlushed = 0
+      val threadName = Thread.currentThread().getName
+      numRemainingSegments.put(threadName, numUnflushed)
+
+      while (unflushedIter.hasNext && !truncated) {
+        val segment = unflushedIter.next()
+        info(s"Recovering unflushed segment ${segment.baseOffset}. $numFlushed/$numUnflushed recovered for $topicPartition.")
+
+        val truncatedBytes =
+          try {
+            recoverSegment(segment)
+          } catch {
+            case e: InvalidOffsetException =>
+              val startOffset = segment.baseOffset
+              warn(s"Found invalid offset during recovery. Deleting the" +
+                s" corrupt segment and creating an empty one with starting offset $startOffset", e)
+              // We use appended offset here to decide whether to truncate the segment.
+              // It is equivalent to 'truncatedBytes' since we only care if the segment has any data.
+              segment.asInstanceOf[ElasticLogSegment].appendedOffset
+          }
+        if (truncatedBytes > 0) {
+          // we had an invalid message, delete all remaining log
+          warn(s"Corruption found in segment ${segment.baseOffset}," +
+            s" truncating to offset ${segment.readNextOffset}")
+          // remove all other segments
+          removeAndDeleteSegmentsAsync(unflushedIter.toList)
+          truncated = true
+          // segment is truncated, so set remaining segments to 0
+          numRemainingSegments.put(threadName, 0)
+        } else {
+          numFlushed += 1
+          numRemainingSegments.put(threadName, numUnflushed - numFlushed)
+        }
+      }
+
+      if (truncated) {
+        val baseOffset = segments.lastSegment.get.baseOffset
+        // remove the targeted segment and recreate an empty one with the correct base offset
+        removeAndDeleteSegmentsAsync(List(segments.lastSegment.get))
+        createAndAddToSegments(baseOffset)
+      }
+    }
+
+    val logEndOffsetOption = getLogEndOffset()
+
+    if (segments.isEmpty) {
+      // no existing segments, create a new mutable segment beginning at logStartOffset
+      createAndAddToSegments(logStartOffsetCheckpoint)
+      // No need to put it into segmentMap since it was done in 'createAndSaveSegmentFunc'.
+    }
+
+    // Update the recovery point if there was a clean shutdown and did not perform any changes to
+    // the segment. Otherwise, we just ensure that the recovery point is not ahead of the log end
+    // offset. To ensure correctness and to make it easier to reason about, it's best to only advance
+    // the recovery point when the log is flushed. If we advanced the recovery point here, we could
+    // skip recovery for unflushed segments if the broker crashed after we checkpoint the recovery
+    // point and before we flush the segment.
+    (hadCleanShutdown, logEndOffsetOption) match {
+      case (true, Some(logEndOffset)) =>
+        (logEndOffset, logEndOffset)
+      case _ =>
+        val logEndOffset = logEndOffsetOption.getOrElse(segments.lastSegment.get.readNextOffset)
+        (Math.min(recoveryPointCheckpoint, logEndOffset), logEndOffset)
+    }
+  }
+
+  private[log] def recoverLogV2(): (Long, Long) = {
     /** return the log end offset if valid */
     def deleteSegmentsIfLogStartGreaterThanLogEnd(): Option[Long] = {
       if (segments.nonEmpty) {
@@ -161,6 +269,8 @@ class ElasticLogLoader(logMeta: ElasticLogMeta,
 
     // If we have the clean shutdown marker, skip recovery.
     if (!hadCleanShutdown) {
+      recoverSegmentsFromUncleanShutdown()
+
       val unflushed = segments.values(recoveryPointCheckpoint, Long.MaxValue)
       val numUnflushed = unflushed.size
       val unflushedIter = unflushed.iterator
@@ -229,6 +339,52 @@ class ElasticLogLoader(logMeta: ElasticLogMeta,
         val logEndOffset = logEndOffsetOption.getOrElse(segments.lastSegment.get.readNextOffset)
         (Math.min(recoveryPointCheckpoint, logEndOffset), logEndOffset)
     }
+  }
+
+  private def recoverSegmentsFromUncleanShutdown(): Unit = {
+    val recoveryOffset = freshEntryAndGetStartRecoveryOffset()
+    val unflushed = segments.values(recoveryOffset, Long.MaxValue)
+    val numUnflushed = unflushed.size
+    if (numUnflushed <= 0) {
+      return
+    } else if (numUnflushed > 1) {
+      throw new IllegalStateException("[Unexpected] Recovery from multiple segments")
+    }
+
+    val unflushedIter = unflushed.iterator
+    var numFlushed = 0
+    val threadName = Thread.currentThread().getName
+    numRemainingSegments.put(threadName, numUnflushed)
+
+    val logEndOffset = getLogEndOffset().getOrElse(0)
+
+    val segment = unflushedIter.next().asInstanceOf[ElasticLogSegment]
+    // We will use this producerStateManager for unclean recovery.
+    val producerStateManager = ElasticProducerStateManager(
+      topicPartition,
+      dir,
+      this.producerStateManager.maxTransactionTimeoutMs,
+      this.producerStateManager.producerStateManagerConfig,
+      time,
+      this.producerStateManager.snapshotsMap,
+      this.producerStateManager.persistFun)
+    ElasticUnifiedLog.rebuildProducerStateInUncleanRecovery(
+      producerStateManager,
+      logStartOffsetCheckpoint,
+      logEndOffset,
+      time,
+      logIdent)
+
+
+    segment.recover(producerStateManager, leaderEpochCache)
+    // once we have recovered the segment's data, take a snapshot to ensure that we won't
+    // need to reload the same segment again while recovering another segment.
+    producerStateManager.takeSnapshot()
+
+
+
+    numFlushed += 1
+    numRemainingSegments.put(threadName, numUnflushed - numFlushed)
   }
 
   private def createAndAddToSegments(baseOffset: Long): Unit = {

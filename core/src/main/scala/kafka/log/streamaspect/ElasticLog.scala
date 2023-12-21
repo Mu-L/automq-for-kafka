@@ -168,6 +168,18 @@ class ElasticLog(val metaStream: MetaStream,
     logSegmentManager.persistLogMeta()
   }
 
+
+  def maybeUpdateTxnRecoveryOffsetAndPersist(): Unit = {
+    if (!producerStateManager.haveOngoingTxns) {
+      val nextOffset = _confirmOffset.get().messageOffset
+      val oldOffset = partitionMeta.getTxnRecoveryRefOffset
+      if (nextOffset > oldOffset) {
+        partitionMeta.setTxnRecoveryRefOffset(nextOffset)
+        persistPartitionMeta()
+      }
+    }
+  }
+
   private def persistPartitionMeta(): Unit = {
     persistMeta(metaStream, MetaKeyValue.of(MetaStream.PARTITION_META_KEY, ElasticPartitionMeta.encode(partitionMeta)))
     info(s"${logIdent}save partition meta $partitionMeta")
@@ -483,7 +495,7 @@ object ElasticLog extends Logging {
       // load meta info for this partition
       val partitionMetaOpt = metaMap.get(MetaStream.PARTITION_META_KEY).map(m => m.asInstanceOf[ElasticPartitionMeta])
       if (partitionMetaOpt.isEmpty) {
-        partitionMeta = new ElasticPartitionMeta(0, 0, 0)
+        partitionMeta = new ElasticPartitionMeta(0, 0, 0, 0)
         persistMeta(metaStream, MetaKeyValue.of(MetaStream.PARTITION_META_KEY, ElasticPartitionMeta.encode(partitionMeta)))
       } else {
         partitionMeta = partitionMetaOpt.get
@@ -534,6 +546,7 @@ object ElasticLog extends Logging {
       val segments = new LogSegments(topicPartition)
       val offsets = new ElasticLogLoader(
         logMeta,
+        partitionMeta,
         segments,
         logSegmentManager,
         streamSliceManager,

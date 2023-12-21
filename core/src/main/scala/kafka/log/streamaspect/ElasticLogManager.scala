@@ -30,7 +30,7 @@ import org.apache.kafka.common.utils.{ThreadUtils, Time}
 import org.apache.kafka.common.Uuid
 
 import java.io.File
-import java.util.concurrent.{ConcurrentHashMap, ConcurrentMap, ThreadPoolExecutor}
+import java.util.concurrent.{ConcurrentHashMap, ConcurrentMap, ScheduledThreadPoolExecutor, ThreadPoolExecutor}
 import scala.jdk.CollectionConverters.ConcurrentMapHasAsScala
 
 class ElasticLogManager(val client: Client) extends Logging {
@@ -38,6 +38,9 @@ class ElasticLogManager(val client: Client) extends Logging {
   private val elasticLogs = new ConcurrentHashMap[TopicPartition, ElasticLog]()
   private val executorService = new ThreadPoolExecutor(1, 8, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
     new java.util.concurrent.LinkedBlockingQueue[Runnable](), ThreadUtils.createThreadFactory("elastic-log-manager-%d", true))
+  private val recoveryScheduleTimeGapInMs = 10_000
+  private val recoveryScheduler = new ScheduledThreadPoolExecutor(1, ThreadUtils.createThreadFactory("elastic-log-manager-recovery-scheduler-%d", true))
+  private var recoveryScheduledFuture: java.util.concurrent.ScheduledFuture[_] = null
 
   def getOrCreateLog(dir: File,
                      config: LogConfig,
@@ -114,10 +117,14 @@ class ElasticLogManager(val client: Client) extends Logging {
 
   def startup(): Unit = {
     client.start()
+    recoveryScheduledFuture = recoveryScheduler.scheduleWithFixedDelay(() => {
+      elasticLogs.values().forEach(_.maybeUpdateTxnRecoveryOffsetAndPersist())
+    }, recoveryScheduleTimeGapInMs, recoveryScheduleTimeGapInMs, java.util.concurrent.TimeUnit.MILLISECONDS)
   }
 
   def shutdownNow(): Unit = {
     client.shutdown()
+    recoveryScheduledFuture.cancel(false)
   }
 
 }

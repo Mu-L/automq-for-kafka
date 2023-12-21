@@ -78,6 +78,27 @@ class ElasticTimeIndex(__file: File, streamSegmentSupplier: StreamSliceSupplier,
     }
   }
 
+  /**
+   * Fetch the last entry from remote and update the last entry in memory.
+   * @return the last entry.
+   */
+  def forceFetchAndMaybeUpdateLastEntry(): TimestampOffset = {
+    val nextOffset = stream.nextOffset()
+    if (nextOffset <= 0) {
+      TimestampOffset(RecordBatch.NO_TIMESTAMP, baseOffset)
+    } else {
+      val rst = stream.fetch(nextOffset - entrySize, nextOffset).get()
+      val records = rst.recordBatchList()
+      if (records.size() == 0) {
+        throw new IllegalStateException(s"fail to fetch last entry from time stream $stream with offset [${nextOffset - entrySize}, $nextOffset)")
+      }
+      val indexEntry = Unpooled.wrappedBuffer(records.get(0).rawPayload());
+      _lastEntry = TimestampOffset(indexEntry.readLong(), indexEntry.readInt())
+      rst.free()
+      _lastEntry
+    }
+  }
+
   def parseEntry(n: Int): TimestampOffset = {
     val startOffset = n * entrySize
     // try get from cache

@@ -978,6 +978,14 @@ class ReplicaManager(val config: KafkaConfig,
       logStartOffset
     }
 
+    // AutoMQ for Kafka inject start
+    def processExpectedFailure(topicPartition: TopicPartition, t: Throwable) = {
+      val logStartOffset = onlinePartition(topicPartition).map(_.logStartOffset).getOrElse(-1L)
+      info(s"Expected failure while processing append operation on partition $topicPartition", t)
+      logStartOffset
+    }
+    // AutoMQ for Kafka inject end
+
     if (traceEnabled)
       trace(s"Append [$entriesPerPartition] to local log")
 
@@ -1023,6 +1031,11 @@ class ReplicaManager(val config: KafkaConfig,
             val recordErrors = rve.recordErrors
             (topicPartition, LogAppendResult(LogAppendInfo.unknownLogAppendInfoWithAdditionalInfo(
               logStartOffset, recordErrors, rve.invalidException.getMessage), Some(rve.invalidException)))
+          // AutoMQ for Kafka inject start
+          case dse: DuplicateSequenceException =>
+            val logStartOffset = processExpectedFailure(topicPartition, dse)
+            (topicPartition, LogAppendResult(LogAppendInfo.unknownLogAppendInfoWithLogStartOffset(logStartOffset), Some(dse)))
+          // AutoMQ for Kafka inject end
           case t: Throwable =>
             val logStartOffset = processFailedRecord(topicPartition, t)
             (topicPartition, LogAppendResult(LogAppendInfo.unknownLogAppendInfoWithLogStartOffset(logStartOffset), Some(t)))

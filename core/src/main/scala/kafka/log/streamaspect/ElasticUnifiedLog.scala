@@ -164,7 +164,7 @@ object ElasticUnifiedLog extends Logging {
       }
     }
 
-    info(s"Reloading from producer snapshot and rebuilding producer state from offset $lastOffset")
+    info(s"$logPrefix Reloading from producer snapshot and rebuilding producer state from offset $lastOffset")
     val isEmptyBeforeTruncation = producerStateManager.isEmpty && producerStateManager.mapEndOffset >= lastOffset
     val producerStateLoadStart = time.milliseconds()
     producerStateManager.truncateAndReload(logStartOffset, lastOffset, time.milliseconds())
@@ -191,6 +191,17 @@ object ElasticUnifiedLog extends Logging {
     producerStateManager.takeSnapshot()
     info(s"${logPrefix}Producer state recovery took ${segmentRecoveryStart - producerStateLoadStart}ms for snapshot load " +
       s"and ${time.milliseconds() - segmentRecoveryStart}ms for segment recovery from offset $lastOffset")
+  }
+
+  def rebuildProducerStateInUncleanRecovery(producerStateManager: ProducerStateManager,
+                           logStartOffset: Long,
+                           lastOffset: Long,
+                           time: Time,
+                           logPrefix: String): Unit = {
+    info(s"$logPrefix Reloading last producer snapshot with logStartOffset $logStartOffset, lastOffset $lastOffset")
+    val producerStateLoadStart = time.milliseconds()
+    producerStateManager.reload(logStartOffset, lastOffset, time.milliseconds())
+    info(s"$logPrefix Producer state recovery took ${time.milliseconds() - producerStateLoadStart}ms for snapshot load")
   }
 
   /**

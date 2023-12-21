@@ -46,14 +46,21 @@ public class ElasticPartitionMeta {
     @JsonProperty("cs")
     private boolean cleanedShutdown;
 
+    /**
+     * The reference checkpoint for txn index recovery.
+     */
+    @JsonProperty("t")
+    private Long txnRecoveryRefOffset;
+
     @SuppressWarnings("unused") // used by jackson
     public ElasticPartitionMeta() {
     }
 
-    public ElasticPartitionMeta(Long startOffset, Long cleanerOffset, Long recoverOffset) {
+    public ElasticPartitionMeta(Long startOffset, Long cleanerOffset, Long recoverOffset, Long txnRecoveryOffset) {
         this.startOffset = startOffset;
         this.cleanerOffset = cleanerOffset;
         this.recoverOffset = recoverOffset;
+        this.txnRecoveryRefOffset = txnRecoveryOffset;
     }
 
     public static ByteBuffer encode(ElasticPartitionMeta meta) {
@@ -108,6 +115,14 @@ public class ElasticPartitionMeta {
         this.cleanedShutdown = cleanedShutdown;
     }
 
+    public Long getTxnRecoveryRefOffset() {
+        return txnRecoveryRefOffset;
+    }
+
+    public void setTxnRecoveryRefOffset(Long txnRecoveryRefOffset) {
+        this.txnRecoveryRefOffset = txnRecoveryRefOffset;
+    }
+
     @Override
     public String toString() {
         return "ElasticPartitionMeta{" +
@@ -115,6 +130,7 @@ public class ElasticPartitionMeta {
                 ", cleanerOffset=" + cleanerOffset +
                 ", recoverOffset=" + recoverOffset +
                 ", cleanedShutdown=" + cleanedShutdown +
+                ", txnRecoveryRefOffset=" + txnRecoveryRefOffset +
                 '}';
     }
 }

@@ -135,6 +135,13 @@ class ElasticLogSegment(val _meta: ElasticStreamSegmentMeta,
     }
   }
 
+  private def maybeUpdateTxnIndex(completedTxn: CompletedTxn, lastStableOffset: Long): Unit = {
+    if (completedTxn.isAborted) {
+      trace(s"Writing aborted transaction $completedTxn to transaction index, last stable offset is $lastStableOffset")
+      txnIndex.maybeAppend(new AbortedTxn(completedTxn, lastStableOffset))
+    }
+  }
+
   protected def updateProducerState(producerStateManager: ProducerStateManager, batch: RecordBatch): Unit = {
     if (batch.hasProducerId) {
       val producerId = batch.producerId
@@ -144,6 +151,24 @@ class ElasticLogSegment(val _meta: ElasticStreamSegmentMeta,
       maybeCompletedTxn.foreach { completedTxn =>
         val lastStableOffset = producerStateManager.lastStableOffset(completedTxn)
         updateTxnIndex(completedTxn, lastStableOffset)
+        producerStateManager.completeTxn(completedTxn)
+      }
+    }
+    producerStateManager.updateMapEndOffset(batch.lastOffset + 1)
+  }
+
+  private def maybeUpdateProducerState(producerStateManager: ProducerStateManager, batch: RecordBatch): Unit = {
+    if (producerStateManager.mapEndOffset > batch.baseOffset()) {
+      return
+    }
+    if (batch.hasProducerId) {
+      val producerId = batch.producerId
+      val appendInfo = producerStateManager.prepareUpdate(producerId, origin = AppendOrigin.Replication)
+      val maybeCompletedTxn = appendInfo.append(batch, firstOffsetMetadataOpt = None)
+      producerStateManager.update(appendInfo)
+      maybeCompletedTxn.foreach { completedTxn =>
+        val lastStableOffset = producerStateManager.lastStableOffset(completedTxn)
+        maybeUpdateTxnIndex(completedTxn, lastStableOffset)
         producerStateManager.completeTxn(completedTxn)
       }
     }
@@ -200,6 +225,46 @@ class ElasticLogSegment(val _meta: ElasticStreamSegmentMeta,
     logListener.onEvent(baseOffset, ElasticLogSegmentEvent.SEGMENT_UPDATE)
 
     recover0(producerStateManager, leaderEpochCache)
+  }
+
+  def recoverV2(producerStateManager: ProducerStateManager, startOffset: Long, leaderEpochCache: Option[LeaderEpochFileCache] = None): Unit = {
+    var validBytes = 0
+    var lastIndexEntry = 0
+    val realStartOffset = Math.min(startOffset, baseOffset)
+
+    maxTimestampAndOffsetSoFar = TimestampOffset.Unknown
+    try {
+      _log.read(realStartOffset, Long.MaxValue, Int.MaxValue).get().batches().forEach(batch => {
+        batch.ensureValid()
+        // The max timestamp is exposed at the batch level, so no need to iterate the records
+        if (batch.maxTimestamp > maxTimestampSoFar) {
+          maxTimestampAndOffsetSoFar = TimestampOffset(batch.maxTimestamp, batch.lastOffset)
+        }
+
+        // Build offset index
+        if (validBytes - lastIndexEntry > indexIntervalBytes) {
+          timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestampSoFar)
+          lastIndexEntry = validBytes
+        }
+        validBytes += batch.sizeInBytes()
+
+        if (batch.magic >= RecordBatch.MAGIC_VALUE_V2) {
+          leaderEpochCache.foreach { cache =>
+            if (batch.partitionLeaderEpoch >= 0 && cache.latestEpoch.forall(batch.partitionLeaderEpoch > _))
+              cache.assign(batch.partitionLeaderEpoch, batch.baseOffset)
+          }
+          maybeUpdateProducerState(producerStateManager, batch)
+        }
+      })
+    } catch {
+      case e@(_: CorruptRecordException | _: InvalidRecordException) =>
+        warn("Found invalid messages in log segment at byte offset %d: %s. %s"
+          .format(validBytes, e.getMessage, e.getCause))
+    }
+    // won't have record corrupted cause truncate
+    // A normally closed segment always appends the biggest timestamp ever seen into log segment, we do this as well.
+    timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestampSoFar, skipFullCheck = true)
+    timeIndex.trimToValidSize()
   }
 
   @nonthreadsafe
