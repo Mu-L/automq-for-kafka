@@ -91,7 +91,7 @@ class ConsumerGroupCommandTest(Test):
 
     @cluster(num_nodes=3)
     @matrix(security_protocol=['PLAINTEXT', 'SSL'], metadata_quorum=quorum.all_non_upgrade)
-    def test_list_consumer_groups(self, security_protocol='PLAINTEXT', metadata_quorum=quorum.zk):
+    def test_list_consumer_groups(self, security_protocol='PLAINTEXT', metadata_quorum=quorum.remote_kraft):
         """
         Tests if ConsumerGroupCommand is listing correct consumer groups
         :return: None
@@ -100,7 +100,7 @@ class ConsumerGroupCommandTest(Test):
 
     @cluster(num_nodes=3)
     @matrix(security_protocol=['PLAINTEXT', 'SSL'], metadata_quorum=quorum.all_non_upgrade)
-    def test_describe_consumer_group(self, security_protocol='PLAINTEXT', metadata_quorum=quorum.zk):
+    def test_describe_consumer_group(self, security_protocol='PLAINTEXT', metadata_quorum=quorum.remote_kraft):
         """
         Tests if ConsumerGroupCommand is describing a consumer group correctly
         :return: None

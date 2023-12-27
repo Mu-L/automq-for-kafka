@@ -60,7 +60,7 @@ class MessageFormatChangeTest(ProduceConsumeValidateTest):
     @matrix(producer_version=[str(DEV_BRANCH)], consumer_version=[str(DEV_BRANCH)], metadata_quorum=[quorum.zk])
     @matrix(producer_version=[str(LATEST_0_10)], consumer_version=[str(LATEST_0_10)], metadata_quorum=[quorum.zk])
     @matrix(producer_version=[str(LATEST_0_9)], consumer_version=[str(LATEST_0_9)], metadata_quorum=[quorum.zk])
-    def test_compatibility(self, producer_version, consumer_version, metadata_quorum=quorum.zk):
+    def test_compatibility(self, producer_version, consumer_version, metadata_quorum=quorum.remote_kraft):
         """ This tests performs the following checks:
         The workload is a mix of 0.9.x, 0.10.x and 0.11.x producers and consumers
         that produce to and consume from a DEV_BRANCH cluster

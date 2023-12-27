@@ -75,7 +75,7 @@ class Log4jAppenderTest(Test):
     @matrix(security_protocol=['PLAINTEXT', 'SSL'], metadata_quorum=quorum.all_non_upgrade)
     @cluster(num_nodes=5)
     @matrix(security_protocol=['SASL_PLAINTEXT', 'SASL_SSL'], metadata_quorum=quorum.all_non_upgrade)
-    def test_log4j_appender(self, security_protocol='PLAINTEXT', metadata_quorum=quorum.zk):
+    def test_log4j_appender(self, security_protocol='PLAINTEXT', metadata_quorum=quorum.remote_kraft):
         """
         Tests if KafkaLog4jAppender is producing to Kafka topic
         :return: None

@@ -60,7 +60,7 @@ class SecurityTest(EndToEndTest):
     @cluster(num_nodes=6)
     @matrix(security_protocol=['PLAINTEXT'], interbroker_security_protocol=['SSL'], metadata_quorum=quorum.all_non_upgrade)
     @matrix(security_protocol=['SSL'], interbroker_security_protocol=['PLAINTEXT'], metadata_quorum=quorum.all_non_upgrade)
-    def test_client_ssl_endpoint_validation_failure(self, security_protocol, interbroker_security_protocol, metadata_quorum=quorum.zk):
+    def test_client_ssl_endpoint_validation_failure(self, security_protocol, interbroker_security_protocol, metadata_quorum=quorum.remote_kraft):
         """
         Test that invalid hostname in certificate results in connection failures.
         When security_protocol=SSL, client SSL handshakes are expected to fail due to hostname verification failure.
@@ -133,7 +133,7 @@ class SecurityTest(EndToEndTest):
 
     @cluster(num_nodes=2)
     @matrix(metadata_quorum=[quorum.zk, quorum.remote_kraft])
-    def test_quorum_ssl_endpoint_validation_failure(self, metadata_quorum=quorum.zk):
+    def test_quorum_ssl_endpoint_validation_failure(self, metadata_quorum=quorum.remote_kraft):
         """
         Test that invalid hostname in ZooKeeper or KRaft Controller results in broker inability to start.
         """

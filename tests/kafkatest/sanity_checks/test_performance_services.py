@@ -46,7 +46,7 @@ class PerformanceServiceTest(Test):
     @parametrize(version=str(LATEST_1_1), new_consumer=False)
     @cluster(num_nodes=5)
     @matrix(version=[str(DEV_BRANCH)], metadata_quorum=quorum.all)
-    def test_version(self, version=str(LATEST_0_9), new_consumer=True, metadata_quorum=quorum.zk):
+    def test_version(self, version=str(LATEST_0_9), new_consumer=True, metadata_quorum=quorum.remote_kraft):
         """
         Sanity check out producer performance service - verify that we can run the service with a small
         number of messages. The actual stats here are pretty meaningless since the number of messages is quite small.

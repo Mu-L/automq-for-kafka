@@ -43,7 +43,7 @@ class ReplicaScaleTest(Test):
     # FIXME: support large scale topic create
     # @matrix(topic_count=[50], partition_count=[34], replication_factor=[3], metadata_quorum=quorum.all_non_upgrade)
     @matrix(topic_count=[3], partition_count=[34], replication_factor=[3], metadata_quorum=quorum.all_non_upgrade)
-    def test_produce_consume(self, topic_count, partition_count, replication_factor, metadata_quorum=quorum.zk):
+    def test_produce_consume(self, topic_count, partition_count, replication_factor, metadata_quorum=quorum.remote_kraft):
         topics_create_start_time = time.time()
         for i in range(topic_count):
             topic = "replicas_produce_consume_%d" % i
@@ -102,7 +102,7 @@ class ReplicaScaleTest(Test):
     # FIXME: support large scale topic create
     # @matrix(topic_count=[50], partition_count=[34], replication_factor=[3], metadata_quorum=quorum.all_non_upgrade)
     @matrix(topic_count=[1], partition_count=[34], replication_factor=[3], metadata_quorum=quorum.all_non_upgrade)
-    def test_clean_bounce(self, topic_count, partition_count, replication_factor, metadata_quorum=quorum.zk):
+    def test_clean_bounce(self, topic_count, partition_count, replication_factor, metadata_quorum=quorum.remote_kraft):
         topics_create_start_time = time.time()
         for i in range(topic_count):
             topic = "topic-%04d" % i
