@@ -17,7 +17,7 @@ from ducktape.mark.resource import cluster
 from ducktape.utils.util import wait_until
 
 from kafkatest.tests.verifiable_consumer_test import VerifiableConsumerTest
-from kafkatest.services.kafka import TopicPartition
+from kafkatest.services.kafka import TopicPartition, quorum
 from kafkatest.services.verifiable_consumer import VerifiableConsumer
 
 
@@ -51,7 +51,7 @@ class TruncationTest(VerifiableConsumerTest):
         return consumer
 
     @cluster(num_nodes=7)
-    def test_offset_truncate(self):
+    def test_offset_truncate(self, metadata_quorum=quorum.remote_kraft):
         """
         Verify correct consumer behavior when the brokers are consecutively restarted.
 

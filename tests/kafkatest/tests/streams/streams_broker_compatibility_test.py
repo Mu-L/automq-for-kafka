@@ -17,7 +17,7 @@ from ducktape.mark import parametrize
 from ducktape.mark.resource import cluster
 from ducktape.tests.test import Test
 from ducktape.utils.util import wait_until
-from kafkatest.services.kafka import KafkaService
+from kafkatest.services.kafka import KafkaService, quorum
 from kafkatest.services.streams import StreamsBrokerCompatibilityService
 from kafkatest.services.verifiable_consumer import VerifiableConsumer
 from kafkatest.services.zookeeper import ZookeeperService
@@ -41,7 +41,7 @@ class StreamsBrokerCompatibility(Test):
 
     def __init__(self, test_context):
         super(StreamsBrokerCompatibility, self).__init__(test_context=test_context)
-        self.zk = ZookeeperService(test_context, num_nodes=1)
+        self.zk = None
         self.kafka = KafkaService(test_context,
                                   num_nodes=1,
                                   zk=self.zk,
@@ -60,7 +60,8 @@ class StreamsBrokerCompatibility(Test):
                                            "stream-broker-compatibility-verify-consumer")
 
     def setUp(self):
-        self.zk.start()
+        if self.zk:
+            self.zk.start()
 
 
     @cluster(num_nodes=4)
@@ -80,7 +81,7 @@ class StreamsBrokerCompatibility(Test):
     @parametrize(broker_version=str(LATEST_1_1))
     @parametrize(broker_version=str(LATEST_1_0))
     @parametrize(broker_version=str(LATEST_0_11_0))
-    def test_compatible_brokers_eos_disabled(self, broker_version):
+    def test_compatible_brokers_eos_disabled(self, broker_version, metadata_quorum=quorum.remote_kraft):
         self.kafka.set_version(KafkaVersion(broker_version))
         self.kafka.start()
 
@@ -113,7 +114,7 @@ class StreamsBrokerCompatibility(Test):
     @parametrize(broker_version=str(LATEST_1_1))
     @parametrize(broker_version=str(LATEST_1_0))
     @parametrize(broker_version=str(LATEST_0_11_0))
-    def test_compatible_brokers_eos_alpha_enabled(self, broker_version):
+    def test_compatible_brokers_eos_alpha_enabled(self, broker_version, metadata_quorum=quorum.remote_kraft):
         self.kafka.set_version(KafkaVersion(broker_version))
         self.kafka.start()
 
@@ -138,7 +139,7 @@ class StreamsBrokerCompatibility(Test):
     @parametrize(broker_version=str(LATEST_2_7))
     @parametrize(broker_version=str(LATEST_2_6))
     @parametrize(broker_version=str(LATEST_2_5))
-    def test_compatible_brokers_eos_v2_enabled(self, broker_version):
+    def test_compatible_brokers_eos_v2_enabled(self, broker_version, metadata_quorum=quorum.remote_kraft):
         self.kafka.set_version(KafkaVersion(broker_version))
         self.kafka.start()
 

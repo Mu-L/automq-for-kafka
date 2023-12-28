@@ -19,7 +19,7 @@ from ducktape.mark.resource import cluster
 from ducktape.services.service import Service
 from ducktape.tests.test import Test
 
-from kafkatest.services.kafka import KafkaService
+from kafkatest.services.kafka import KafkaService, quorum
 from kafkatest.services.performance import ProducerPerformanceService, EndToEndLatencyService, ConsumerPerformanceService, throughput, latency, compute_aggregate_throughput
 from kafkatest.services.zookeeper import ZookeeperService
 from kafkatest.version import DEV_BRANCH, KafkaVersion
@@ -43,7 +43,7 @@ class Benchmark(Test):
             TOPIC_REP_THREE: {'partitions': 6, 'replication-factor': 3}
         }
 
-        self.zk = ZookeeperService(test_context, self.num_zk)
+        self.zk = None
 
         self.msgs_large = 10000000
         self.batch_size = 8*1024
@@ -53,7 +53,8 @@ class Benchmark(Test):
         self.target_data_size_gb = self.target_data_size/float(1024*1024*1024)
 
     def setUp(self):
-        self.zk.start()
+        if self.zk:
+            self.zk.start()
 
     def start_kafka(self, security_protocol, interbroker_security_protocol, version, tls_version=None):
         self.kafka = KafkaService(
@@ -68,13 +69,13 @@ class Benchmark(Test):
     @parametrize(acks=1, topic=TOPIC_REP_ONE)
     @parametrize(acks=1, topic=TOPIC_REP_THREE)
     @parametrize(acks=-1, topic=TOPIC_REP_THREE)
-    @matrix(acks=[1], topic=[TOPIC_REP_THREE], message_size=[10, 100, 1000, 10000, 100000], compression_type=["none", "snappy"], security_protocol=['SSL'], tls_version=['TLSv1.2', 'TLSv1.3'])
-    @matrix(acks=[1], topic=[TOPIC_REP_THREE], message_size=[10, 100, 1000, 10000, 100000], compression_type=["none", "snappy"], security_protocol=['PLAINTEXT'])
+    @matrix(acks=[1], topic=[TOPIC_REP_THREE], message_size=[10, 100, 1000, 10000, 100000], compression_type=["none", "snappy"], security_protocol=['SSL'], tls_version=['TLSv1.2', 'TLSv1.3'], metadata_quorum=quorum.all)
+    @matrix(acks=[1], topic=[TOPIC_REP_THREE], message_size=[10, 100, 1000, 10000, 100000], compression_type=["none", "snappy"], security_protocol=['PLAINTEXT'], metadata_quorum=quorum.all)
     @cluster(num_nodes=7)
     @parametrize(acks=1, topic=TOPIC_REP_THREE, num_producers=3)
     def test_producer_throughput(self, acks, topic, num_producers=1, message_size=DEFAULT_RECORD_SIZE,
                                  compression_type="none", security_protocol='PLAINTEXT', tls_version=None, client_version=str(DEV_BRANCH),
-                                 broker_version=str(DEV_BRANCH)):
+                                 broker_version=str(DEV_BRANCH), metadata_quorum=quorum.remote_kraft):
         """
         Setup: 1 node zk + 3 node kafka cluster
         Produce ~128MB worth of messages to a topic with 6 partitions. Required acks, topic replication factor,
@@ -102,12 +103,12 @@ class Benchmark(Test):
         return compute_aggregate_throughput(self.producer)
 
     @cluster(num_nodes=5)
-    @matrix(security_protocol=['SSL'], interbroker_security_protocol=['PLAINTEXT'], tls_version=['TLSv1.2', 'TLSv1.3'], compression_type=["none", "snappy"])
-    @matrix(security_protocol=['PLAINTEXT'], compression_type=["none", "snappy"])
+    @matrix(security_protocol=['SSL'], interbroker_security_protocol=['PLAINTEXT'], tls_version=['TLSv1.2', 'TLSv1.3'], compression_type=["none", "snappy"], metadata_quorum=quorum.all)
+    @matrix(security_protocol=['PLAINTEXT'], compression_type=["none", "snappy"], metadata_quorum=quorum.all)
     def test_long_term_producer_throughput(self, compression_type="none",
                                            security_protocol='PLAINTEXT', tls_version=None,
                                            interbroker_security_protocol=None, client_version=str(DEV_BRANCH),
-                                           broker_version=str(DEV_BRANCH)):
+                                           broker_version=str(DEV_BRANCH), metadata_quorum=quorum.remote_kraft):
         """
         Setup: 1 node zk + 3 node kafka cluster
         Produce 10e6 100 byte messages to a topic with 6 partitions, replication-factor 3, and acks=1.
@@ -159,13 +160,13 @@ class Benchmark(Test):
         return data
 
     @cluster(num_nodes=5)
-    @matrix(security_protocol=['SSL'], interbroker_security_protocol=['PLAINTEXT'], tls_version=['TLSv1.2', 'TLSv1.3'], compression_type=["none", "snappy"])
-    @matrix(security_protocol=['PLAINTEXT'], compression_type=["none", "snappy"])
+    @matrix(security_protocol=['SSL'], interbroker_security_protocol=['PLAINTEXT'], tls_version=['TLSv1.2', 'TLSv1.3'], compression_type=["none", "snappy"], metadata_quorum=quorum.all)
+    @matrix(security_protocol=['PLAINTEXT'], compression_type=["none", "snappy"], metadata_quorum=quorum.all)
     @cluster(num_nodes=6)
-    @matrix(security_protocol=['SASL_PLAINTEXT', 'SASL_SSL'], compression_type=["none", "snappy"])
+    @matrix(security_protocol=['SASL_PLAINTEXT', 'SASL_SSL'], compression_type=["none", "snappy"], metadata_quorum=quorum.all)
     def test_end_to_end_latency(self, compression_type="none", security_protocol="PLAINTEXT", tls_version=None,
                                 interbroker_security_protocol=None, client_version=str(DEV_BRANCH),
-                                broker_version=str(DEV_BRANCH)):
+                                broker_version=str(DEV_BRANCH), metadata_quorum=quorum.remote_kraft):
         """
         Setup: 1 node zk + 3 node kafka cluster
         Produce (acks = 1) and consume 10e3 messages to a topic with 6 partitions and replication-factor 3,
@@ -191,11 +192,12 @@ class Benchmark(Test):
         return latency(self.perf.results[0]['latency_50th_ms'],  self.perf.results[0]['latency_99th_ms'], self.perf.results[0]['latency_999th_ms'])
 
     @cluster(num_nodes=6)
-    @matrix(security_protocol=['SSL'], interbroker_security_protocol=['PLAINTEXT'], tls_version=['TLSv1.2', 'TLSv1.3'], compression_type=["none", "snappy"])
-    @matrix(security_protocol=['PLAINTEXT'], compression_type=["none", "snappy"])
+    @matrix(security_protocol=['SSL'], interbroker_security_protocol=['PLAINTEXT'], tls_version=['TLSv1.2', 'TLSv1.3'], compression_type=["none", "snappy"], metadata_quorum=quorum.all)
+    @matrix(security_protocol=['PLAINTEXT'], compression_type=["none", "snappy"], metadata_quorum=quorum.all)
     def test_producer_and_consumer(self, compression_type="none", security_protocol="PLAINTEXT", tls_version=None,
                                    interbroker_security_protocol=None,
-                                   client_version=str(DEV_BRANCH), broker_version=str(DEV_BRANCH)):
+                                   client_version=str(DEV_BRANCH), broker_version=str(DEV_BRANCH),
+                                   metadata_quorum=quorum.remote_kraft):
         """
         Setup: 1 node zk + 3 node kafka cluster
         Concurrently produce and consume 10e6 messages with a single producer and a single consumer,
@@ -238,11 +240,11 @@ class Benchmark(Test):
         return data
 
     @cluster(num_nodes=6)
-    @matrix(security_protocol=['SSL'], interbroker_security_protocol=['PLAINTEXT'], tls_version=['TLSv1.2', 'TLSv1.3'], compression_type=["none", "snappy"])
-    @matrix(security_protocol=['PLAINTEXT'], compression_type=["none", "snappy"])
+    @matrix(security_protocol=['SSL'], interbroker_security_protocol=['PLAINTEXT'], tls_version=['TLSv1.2', 'TLSv1.3'], compression_type=["none", "snappy"], metadata_quorum=quorum.all)
+    @matrix(security_protocol=['PLAINTEXT'], compression_type=["none", "snappy"], metadata_quorum=quorum.all)
     def test_consumer_throughput(self, compression_type="none", security_protocol="PLAINTEXT", tls_version=None,
                                  interbroker_security_protocol=None, num_consumers=1,
-                                 client_version=str(DEV_BRANCH), broker_version=str(DEV_BRANCH)):
+                                 client_version=str(DEV_BRANCH), broker_version=str(DEV_BRANCH), metadata_quorum=quorum.remote_kraft):
         """
         Consume 10e6 100-byte messages with 1 or more consumers from a topic with 6 partitions
         and report throughput.

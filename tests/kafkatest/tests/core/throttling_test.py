@@ -21,7 +21,7 @@ from ducktape.utils.util import wait_until
 
 from kafkatest.services.performance import ProducerPerformanceService
 from kafkatest.services.zookeeper import ZookeeperService
-from kafkatest.services.kafka import KafkaService
+from kafkatest.services.kafka import KafkaService, quorum
 from kafkatest.services.console_consumer import ConsoleConsumer
 from kafkatest.tests.produce_consume_validate import ProduceConsumeValidateTest
 from kafkatest.services.verifiable_producer import VerifiableProducer
@@ -46,7 +46,7 @@ class ThrottlingTest(ProduceConsumeValidateTest):
         super(ThrottlingTest, self).__init__(test_context=test_context)
 
         self.topic = "test_topic"
-        self.zk = ZookeeperService(test_context, num_nodes=1)
+        self.zk = None
         # Because we are starting the producer/consumer/validate cycle _after_
         # seeding the cluster with big data (to test throttling), we need to
         # Start the consumer from the end of the stream. further, we need to
@@ -79,7 +79,8 @@ class ThrottlingTest(ProduceConsumeValidateTest):
         self.throttle = 4 * 1024 * 1024  # 4 MB/s
 
     def setUp(self):
-        self.zk.start()
+        if self.zk:
+            self.zk.start()
 
     def min_cluster_size(self):
         # Override this since we're adding services outside of the constructor
@@ -141,7 +142,7 @@ class ThrottlingTest(ProduceConsumeValidateTest):
     @cluster(num_nodes=10)
     @parametrize(bounce_brokers=True)
     @parametrize(bounce_brokers=False)
-    def test_throttled_reassignment(self, bounce_brokers):
+    def test_throttled_reassignment(self, bounce_brokers, metadata_quorum=quorum.remote_kraft):
         security_protocol = 'PLAINTEXT'
         self.kafka.security_protocol = security_protocol
         self.kafka.interbroker_security_protocol = security_protocol

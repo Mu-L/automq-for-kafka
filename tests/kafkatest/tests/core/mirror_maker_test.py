@@ -18,7 +18,7 @@ from ducktape.mark import matrix
 from ducktape.mark.resource import cluster
 
 from kafkatest.services.zookeeper import ZookeeperService
-from kafkatest.services.kafka import KafkaService
+from kafkatest.services.kafka import KafkaService, quorum
 from kafkatest.services.console_consumer import ConsoleConsumer
 from kafkatest.services.verifiable_producer import VerifiableProducer
 from kafkatest.services.mirror_maker import MirrorMaker
@@ -111,10 +111,10 @@ class TestMirrorMakerService(ProduceConsumeValidateTest):
                      err_msg="Producer failed to produce %d messages in a reasonable amount of time." % n_messages)
 
     @cluster(num_nodes=7)
-    @matrix(security_protocol=['PLAINTEXT', 'SSL'])
+    @matrix(security_protocol=['PLAINTEXT', 'SSL'], metadata_quorum=quorum.all)
     @cluster(num_nodes=8)
-    @matrix(security_protocol=['SASL_PLAINTEXT', 'SASL_SSL'])
-    def test_simple_end_to_end(self, security_protocol):
+    @matrix(security_protocol=['SASL_PLAINTEXT', 'SASL_SSL'], metadata_quorum=quorum.all)
+    def test_simple_end_to_end(self, security_protocol, metadata_quorum=quorum.remote_kraft):
         """
         Test end-to-end behavior under non-failure conditions.
 
@@ -136,10 +136,10 @@ class TestMirrorMakerService(ProduceConsumeValidateTest):
         self.mirror_maker.stop()
 
     @cluster(num_nodes=7)
-    @matrix(clean_shutdown=[True, False], security_protocol=['PLAINTEXT', 'SSL'])
+    @matrix(clean_shutdown=[True, False], security_protocol=['PLAINTEXT', 'SSL'], metadata_quorum=quorum.all)
     @cluster(num_nodes=8)
-    @matrix(clean_shutdown=[True, False], security_protocol=['SASL_PLAINTEXT', 'SASL_SSL'])
-    def test_bounce(self, offsets_storage="kafka", clean_shutdown=True, security_protocol='PLAINTEXT'):
+    @matrix(clean_shutdown=[True, False], security_protocol=['SASL_PLAINTEXT', 'SASL_SSL'], metadata_quorum=quorum.all)
+    def test_bounce(self, offsets_storage="kafka", clean_shutdown=True, security_protocol='PLAINTEXT', metadata_quorum=quorum.remote_kraft):
         """
         Test end-to-end behavior under failure conditions.
 

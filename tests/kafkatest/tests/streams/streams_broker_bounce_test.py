@@ -243,8 +243,8 @@ class StreamsBrokerBounceTest(Test):
     @cluster(num_nodes=7)
     @matrix(failure_mode=["clean_shutdown"],
             broker_type=["controller"],
-            sleep_time_secs=[0])
-    def test_broker_type_bounce_at_start(self, failure_mode, broker_type, sleep_time_secs):
+            sleep_time_secs=[0], metadata_quorum=quorum.all)
+    def test_broker_type_bounce_at_start(self, failure_mode, broker_type, sleep_time_secs, metadata_quorum):
         """
         Start a smoke test client, then kill one particular broker immediately before streams stats
         Streams should throw an exception since it cannot create topics with the desired

@@ -734,7 +734,7 @@ class ConnectDistributedTest(Test):
     @parametrize(broker_version=str(LATEST_0_10_2), auto_create_topics=False, exactly_once_source=False, connect_protocol='eager')
     @parametrize(broker_version=str(LATEST_0_10_1), auto_create_topics=False, exactly_once_source=False, connect_protocol='eager')
     @parametrize(broker_version=str(LATEST_0_10_0), auto_create_topics=True, exactly_once_source=False, connect_protocol='eager')
-    def test_broker_compatibility(self, broker_version, auto_create_topics, exactly_once_source, connect_protocol):
+    def test_broker_compatibility(self, broker_version, auto_create_topics, exactly_once_source, connect_protocol, metadata_quorum=quorum.remote_kraft):
         """
         Verify that Connect will start up with various broker versions with various configurations. 
         When Connect distributed starts up, it either creates internal topics (v0.10.1.0 and after) 

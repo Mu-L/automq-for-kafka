@@ -20,6 +20,7 @@ from ducktape.mark.resource import cluster
 from ducktape.tests.test import Test
 from ducktape.utils.util import wait_until
 
+from kafkatest.services.kafka import quorum
 from kafkatest.services.trogdor.degraded_network_fault_spec import DegradedNetworkFaultSpec
 from kafkatest.services.trogdor.trogdor import TrogdorService
 from kafkatest.services.zookeeper import ZookeeperService
@@ -34,21 +35,23 @@ class NetworkDegradeTest(Test):
 
     def __init__(self, test_context):
         super(NetworkDegradeTest, self).__init__(test_context)
-        self.zk = ZookeeperService(test_context, num_nodes=3)
+        self.zk = None
         self.trogdor = TrogdorService(context=self.test_context, client_services=[self.zk])
 
     def setUp(self):
-        self.zk.start()
+        if self.zk:
+            self.zk.start()
         self.trogdor.start()
 
     def teardown(self):
         self.trogdor.stop()
-        self.zk.stop()
+        if self.zk:
+            self.zk.stop()
 
     @cluster(num_nodes=5)
     @parametrize(task_name="latency-100", device_name="eth0", latency_ms=50, rate_limit_kbit=0)
     @parametrize(task_name="latency-100-rate-1000", device_name="eth0", latency_ms=50, rate_limit_kbit=1000)
-    def test_latency(self, task_name, device_name, latency_ms, rate_limit_kbit):
+    def test_latency(self, task_name, device_name, latency_ms, rate_limit_kbit, metadata_quorum=quorum.remote_kraft):
         spec = DegradedNetworkFaultSpec(0, 10000)
         for node in self.zk.nodes:
             spec.add_node_spec(node.name, device_name, latency_ms, rate_limit_kbit)
@@ -89,7 +92,7 @@ class NetworkDegradeTest(Test):
     @cluster(num_nodes=5)
     @parametrize(task_name="rate-1000", device_name="eth0", latency_ms=0, rate_limit_kbit=1000000)
     @parametrize(task_name="rate-1000-latency-50", device_name="eth0", latency_ms=50, rate_limit_kbit=1000000)
-    def test_rate(self, task_name, device_name, latency_ms, rate_limit_kbit):
+    def test_rate(self, task_name, device_name, latency_ms, rate_limit_kbit, metadata_quorum=quorum.remote_kraft):
         zk0 = self.zk.nodes[0]
         zk1 = self.zk.nodes[1]
 

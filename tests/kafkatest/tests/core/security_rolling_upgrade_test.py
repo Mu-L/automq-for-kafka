@@ -14,7 +14,7 @@
 # limitations under the License.
 from kafkatest.services.security.security_config import SecurityConfig
 from kafkatest.services.zookeeper import ZookeeperService
-from kafkatest.services.kafka import KafkaService
+from kafkatest.services.kafka import KafkaService, quorum
 from kafkatest.services.verifiable_producer import VerifiableProducer
 from kafkatest.services.console_consumer import ConsoleConsumer
 from kafkatest.utils import is_int
@@ -39,12 +39,13 @@ class TestSecurityRollingUpgrade(ProduceConsumeValidateTest):
         self.producer_throughput = 100
         self.num_producers = 1
         self.num_consumers = 1
-        self.zk = ZookeeperService(self.test_context, num_nodes=1)
+        self.zk = None
         self.kafka = KafkaService(self.test_context, num_nodes=3, zk=self.zk, topics={self.topic: {
             "partitions": 3,
             "replication-factor": 3,
             'configs': {"min.insync.replicas": 2}}})
-        self.zk.start()
+        if self.zk:
+            self.zk.start()
 
     def create_producer_and_consumer(self):
         self.producer = VerifiableProducer(
@@ -126,10 +127,10 @@ class TestSecurityRollingUpgrade(ProduceConsumeValidateTest):
         self.bounce()
 
     @cluster(num_nodes=8)
-    @matrix(client_protocol=[SecurityConfig.SSL])
+    @matrix(client_protocol=[SecurityConfig.SSL], metadata_quorum=quorum.all)
     @cluster(num_nodes=9)
-    @matrix(client_protocol=[SecurityConfig.SASL_PLAINTEXT, SecurityConfig.SASL_SSL])
-    def test_rolling_upgrade_phase_one(self, client_protocol):
+    @matrix(client_protocol=[SecurityConfig.SASL_PLAINTEXT, SecurityConfig.SASL_SSL], metadata_quorum=quorum.all)
+    def test_rolling_upgrade_phase_one(self, client_protocol, metadata_quorum):
         """
         Start with a PLAINTEXT cluster, open a SECURED port, via a rolling upgrade, ensuring we could produce
         and consume throughout over PLAINTEXT. Finally check we can produce and consume the new secured port.
@@ -151,8 +152,8 @@ class TestSecurityRollingUpgrade(ProduceConsumeValidateTest):
 
     @cluster(num_nodes=8)
     @matrix(client_protocol=[SecurityConfig.SASL_SSL, SecurityConfig.SSL, SecurityConfig.SASL_PLAINTEXT],
-            broker_protocol=[SecurityConfig.SASL_SSL, SecurityConfig.SSL, SecurityConfig.SASL_PLAINTEXT])
-    def test_rolling_upgrade_phase_two(self, client_protocol, broker_protocol):
+            broker_protocol=[SecurityConfig.SASL_SSL, SecurityConfig.SSL, SecurityConfig.SASL_PLAINTEXT], metadata_quorum=quorum.all)
+    def test_rolling_upgrade_phase_two(self, client_protocol, broker_protocol, metadata_quorum):
         """
         Start with a PLAINTEXT cluster with a second Secured port open (i.e. result of phase one).
         A third secure port is also open if inter-broker and client protocols are different.
@@ -179,8 +180,8 @@ class TestSecurityRollingUpgrade(ProduceConsumeValidateTest):
         self.run_produce_consume_validate(self.roll_in_secured_settings, client_protocol, broker_protocol)
 
     @cluster(num_nodes=9)
-    @matrix(new_client_sasl_mechanism=[SecurityConfig.SASL_MECHANISM_PLAIN])
-    def test_rolling_upgrade_sasl_mechanism_phase_one(self, new_client_sasl_mechanism):
+    @matrix(new_client_sasl_mechanism=[SecurityConfig.SASL_MECHANISM_PLAIN], metadata_quorum=quorum.all)
+    def test_rolling_upgrade_sasl_mechanism_phase_one(self, new_client_sasl_mechanism, metadata_quorum):
         """
         Start with a SASL/GSSAPI cluster, add new SASL mechanism, via a rolling upgrade, ensuring we could produce
         and consume throughout over SASL/GSSAPI. Finally check we can produce and consume using new mechanism.
@@ -203,8 +204,8 @@ class TestSecurityRollingUpgrade(ProduceConsumeValidateTest):
         self.run_produce_consume_validate(lambda: time.sleep(1))
 
     @cluster(num_nodes=8)
-    @matrix(new_sasl_mechanism=[SecurityConfig.SASL_MECHANISM_PLAIN])
-    def test_rolling_upgrade_sasl_mechanism_phase_two(self, new_sasl_mechanism):
+    @matrix(new_sasl_mechanism=[SecurityConfig.SASL_MECHANISM_PLAIN], metadata_quorum=quorum.all)
+    def test_rolling_upgrade_sasl_mechanism_phase_two(self, new_sasl_mechanism, metadata_quorum):
         """
         Start with a SASL cluster with GSSAPI for inter-broker and a second mechanism for clients (i.e. result of phase one).
         Start Producer and Consumer using the second mechanism
@@ -226,7 +227,8 @@ class TestSecurityRollingUpgrade(ProduceConsumeValidateTest):
         self.run_produce_consume_validate(self.roll_in_sasl_mechanism, self.kafka.security_protocol, new_sasl_mechanism)
 
     @cluster(num_nodes=9)
-    def test_enable_separate_interbroker_listener(self):
+    @matrix(metadata_quorum=quorum.all)
+    def test_enable_separate_interbroker_listener(self, metadata_quorum):
         """
         Start with a cluster that has a single PLAINTEXT listener.
         Start producing/consuming on PLAINTEXT port.
@@ -243,7 +245,8 @@ class TestSecurityRollingUpgrade(ProduceConsumeValidateTest):
                                           SecurityConfig.SASL_MECHANISM_PLAIN)
 
     @cluster(num_nodes=9)
-    def test_disable_separate_interbroker_listener(self):
+    @matrix(metadata_quorum=quorum.all)
+    def test_disable_separate_interbroker_listener(self, metadata_quorum):
         """
         Start with a cluster that has two listeners, one on SSL (clients), another on SASL_SSL (broker-to-broker).
         Start producer and consumer on SSL listener.

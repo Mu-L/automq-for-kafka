@@ -16,7 +16,7 @@
 from ducktape.utils.util import wait_until
 from ducktape.mark import matrix
 from ducktape.mark.resource import cluster
-from kafkatest.services.kafka import config_property
+from kafkatest.services.kafka import config_property, quorum
 from kafkatest.services.zookeeper import ZookeeperService
 from kafkatest.services.kafka import KafkaService
 from kafkatest.services.verifiable_producer import VerifiableProducer
@@ -62,7 +62,7 @@ class LogDirFailureTest(ProduceConsumeValidateTest):
 
         self.topic1 = "test_topic_1"
         self.topic2 = "test_topic_2"
-        self.zk = ZookeeperService(test_context, num_nodes=1)
+        self.zk = None
         self.kafka = KafkaService(test_context,
                                   num_nodes=3,
                                   zk=self.zk,
@@ -84,15 +84,16 @@ class LogDirFailureTest(ProduceConsumeValidateTest):
         self.num_consumers = 1
 
     def setUp(self):
-        self.zk.start()
+        if self.zk:
+            self.zk.start()
 
     def min_cluster_size(self):
         """Override this since we're adding services outside of the constructor"""
         return super(LogDirFailureTest, self).min_cluster_size() + self.num_producers * 2 + self.num_consumers * 2
 
     @cluster(num_nodes=9)
-    @matrix(bounce_broker=[False, True], broker_type=["leader", "follower"], security_protocol=["PLAINTEXT"])
-    def test_replication_with_disk_failure(self, bounce_broker, security_protocol, broker_type):
+    @matrix(bounce_broker=[False, True], broker_type=["leader", "follower"], security_protocol=["PLAINTEXT"], metadata_quorum=quorum.all)
+    def test_replication_with_disk_failure(self, bounce_broker, security_protocol, broker_type, metadata_quorum):
         """Replication tests.
         These tests verify that replication provides simple durability guarantees by checking that data acked by
         brokers is still available for consumption in the face of various failure scenarios.
