@@ -136,7 +136,7 @@ class ReplicationTest(EndToEndTest):
             metadata_quorum=quorum.all_non_upgrade)
     @parametrize(failure_mode="hard_bounce",
             broker_type="leader",
-            security_protocol="SASL_SSL", client_sasl_mechanism="SCRAM-SHA-256", interbroker_sasl_mechanism="SCRAM-SHA-512")
+            security_protocol="SASL_SSL", client_sasl_mechanism="SCRAM-SHA-256", interbroker_sasl_mechanism="SCRAM-SHA-512", metadata_quorum=quorum.remote_kraft)
     @matrix(failure_mode=["clean_shutdown",
                           # "hard_shutdown", s3stream need clean shutdown
                           "clean_bounce", "hard_bounce"],

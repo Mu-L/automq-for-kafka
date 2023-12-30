@@ -15,7 +15,7 @@
 
 import random
 import time
-from ducktape.mark import matrix, ignore
+from ducktape.mark import matrix, ignore, parametrize
 from ducktape.mark.resource import cluster
 from ducktape.tests.test import Test
 from ducktape.utils.util import wait_until
@@ -106,7 +106,7 @@ class StreamsUpgradeTest(Test):
 
     @ignore
     @cluster(num_nodes=6)
-    @matrix(from_version=broker_upgrade_versions, to_version=broker_upgrade_versions)
+    @matrix(from_version=broker_upgrade_versions, to_version=broker_upgrade_versions, metadata_quorum=quorum.all)
     def test_upgrade_downgrade_brokers(self, from_version, to_version, metadata_quorum=quorum.remote_kraft):
         """
         Start a smoke test client then perform rolling upgrades on the broker.
@@ -197,9 +197,9 @@ class StreamsUpgradeTest(Test):
         processor.node.account.ssh_capture("grep SMOKE-TEST-CLIENT-CLOSED %s" % processor.STDOUT_FILE, allow_fail=False)
 
     @cluster(num_nodes=6)
-    @matrix(from_version=metadata_1_versions, to_version=[str(DEV_VERSION)])
-    @matrix(from_version=metadata_2_versions, to_version=[str(DEV_VERSION)])
-    @matrix(from_version=fk_join_versions, to_version=[str(DEV_VERSION)])
+    @matrix(from_version=metadata_1_versions, to_version=[str(DEV_VERSION)], metadata_quorum=quorum.all)
+    @matrix(from_version=metadata_2_versions, to_version=[str(DEV_VERSION)], metadata_quorum=quorum.all)
+    @matrix(from_version=fk_join_versions, to_version=[str(DEV_VERSION)], metadata_quorum=quorum.all)
     def test_rolling_upgrade_with_2_bounces(self, from_version, to_version, metadata_quorum=quorum.remote_kraft):
         """
         This test verifies that the cluster successfully upgrades despite changes in the metadata and FK
@@ -261,6 +261,7 @@ class StreamsUpgradeTest(Test):
                                    err_msg="Never saw output 'UPGRADE-TEST-CLIENT-CLOSED' on" + str(node.account))
 
     @cluster(num_nodes=6)
+    @parametrize(metadata_quorum=quorum.remote_kraft)
     def test_version_probing_upgrade(self, metadata_quorum=quorum.remote_kraft):
         """
         Starts 3 KafkaStreams instances, and upgrades one-by-one to "future version"

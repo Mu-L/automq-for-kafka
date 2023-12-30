@@ -49,8 +49,8 @@ class NetworkDegradeTest(Test):
             self.zk.stop()
 
     @cluster(num_nodes=5)
-    @parametrize(task_name="latency-100", device_name="eth0", latency_ms=50, rate_limit_kbit=0)
-    @parametrize(task_name="latency-100-rate-1000", device_name="eth0", latency_ms=50, rate_limit_kbit=1000)
+    @parametrize(task_name="latency-100", device_name="eth0", latency_ms=50, rate_limit_kbit=0, metadata_quorum=quorum.remote_kraft)
+    @parametrize(task_name="latency-100-rate-1000", device_name="eth0", latency_ms=50, rate_limit_kbit=1000, metadata_quorum=quorum.remote_kraft)
     def test_latency(self, task_name, device_name, latency_ms, rate_limit_kbit, metadata_quorum=quorum.remote_kraft):
         spec = DegradedNetworkFaultSpec(0, 10000)
         for node in self.zk.nodes:
@@ -90,8 +90,8 @@ class NetworkDegradeTest(Test):
         assert len(fast_times) > 5, "Expected to see more fast ping times (higher than %d)" % high_time_ms
 
     @cluster(num_nodes=5)
-    @parametrize(task_name="rate-1000", device_name="eth0", latency_ms=0, rate_limit_kbit=1000000)
-    @parametrize(task_name="rate-1000-latency-50", device_name="eth0", latency_ms=50, rate_limit_kbit=1000000)
+    @parametrize(task_name="rate-1000", device_name="eth0", latency_ms=0, rate_limit_kbit=1000000, metadata_quorum=quorum.remote_kraft)
+    @parametrize(task_name="rate-1000-latency-50", device_name="eth0", latency_ms=50, rate_limit_kbit=1000000, metadata_quorum=quorum.remote_kraft)
     def test_rate(self, task_name, device_name, latency_ms, rate_limit_kbit, metadata_quorum=quorum.remote_kraft):
         zk0 = self.zk.nodes[0]
         zk1 = self.zk.nodes[1]

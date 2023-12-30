@@ -66,10 +66,10 @@ class ConnectStandaloneFileTest(Test):
         self.zk = ZookeeperService(test_context, self.num_zk) if quorum.for_test(test_context) == quorum.zk else None
 
     @cluster(num_nodes=5)
-    @parametrize(converter="org.apache.kafka.connect.json.JsonConverter", schemas=True)
-    @parametrize(converter="org.apache.kafka.connect.json.JsonConverter", schemas=False)
-    @parametrize(converter="org.apache.kafka.connect.storage.StringConverter", schemas=None)
-    @parametrize(security_protocol=SecurityConfig.PLAINTEXT)
+    @parametrize(converter="org.apache.kafka.connect.json.JsonConverter", schemas=True, metadata_quorum=quorum.remote_kraft)
+    @parametrize(converter="org.apache.kafka.connect.json.JsonConverter", schemas=False, metadata_quorum=quorum.remote_kraft)
+    @parametrize(converter="org.apache.kafka.connect.storage.StringConverter", schemas=None, metadata_quorum=quorum.remote_kraft)
+    @parametrize(security_protocol=SecurityConfig.PLAINTEXT, metadata_quorum=quorum.remote_kraft)
     @cluster(num_nodes=6)
     @matrix(security_protocol=[SecurityConfig.SASL_SSL], metadata_quorum=quorum.all_non_upgrade)
     def test_file_source_and_sink(self, converter="org.apache.kafka.connect.json.JsonConverter", schemas=True, security_protocol='PLAINTEXT',

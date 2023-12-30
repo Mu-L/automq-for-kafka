@@ -129,9 +129,9 @@ class QuotaTest(Test):
 
     @cluster(num_nodes=5)
     @matrix(quota_type=[QuotaConfig.CLIENT_ID, QuotaConfig.USER, QuotaConfig.USER_CLIENT], override_quota=[True, False], metadata_quorum=quorum.all)
-    @parametrize(quota_type=QuotaConfig.CLIENT_ID, consumer_num=2)
-    @parametrize(quota_type=QuotaConfig.CLIENT_ID, old_broker_throttling_behavior=True)
-    @parametrize(quota_type=QuotaConfig.CLIENT_ID, old_client_throttling_behavior=True)
+    @parametrize(quota_type=QuotaConfig.CLIENT_ID, consumer_num=2, metadata_quorum=quorum.remote_kraft)
+    @parametrize(quota_type=QuotaConfig.CLIENT_ID, old_broker_throttling_behavior=True, metadata_quorum=quorum.remote_kraft)
+    @parametrize(quota_type=QuotaConfig.CLIENT_ID, old_client_throttling_behavior=True, metadata_quorum=quorum.remote_kraft)
     def test_quota(self, quota_type, override_quota=True, producer_num=1, consumer_num=1,
                    old_broker_throttling_behavior=False, old_client_throttling_behavior=False, metadata_quorum=quorum.remote_kraft):
         # Old (pre-2.0) throttling behavior for broker throttles before sending a response to the client.

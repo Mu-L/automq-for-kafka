@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+from ducktape.mark import parametrize
 from ducktape.mark.resource import cluster
 from ducktape.utils.util import wait_until
 
@@ -51,6 +51,7 @@ class TruncationTest(VerifiableConsumerTest):
         return consumer
 
     @cluster(num_nodes=7)
+    @parametrize(metadata_quorum=quorum.remote_kraft)
     def test_offset_truncate(self, metadata_quorum=quorum.remote_kraft):
         """
         Verify correct consumer behavior when the brokers are consecutively restarted.

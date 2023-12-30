@@ -68,7 +68,7 @@ class StreamsCooperativeRebalanceUpgradeTest(Test):
                                            acks=1)
 
     @cluster(num_nodes=8)
-    @matrix(upgrade_from_version=streams_eager_rebalance_upgrade_versions)
+    @matrix(upgrade_from_version=streams_eager_rebalance_upgrade_versions, metadata_quorum=quorum.all)
     def test_upgrade_to_cooperative_rebalance(self, upgrade_from_version, metadata_quorum=quorum.remote_kraft):
         if self.zookeeper:
             self.zookeeper.start()
