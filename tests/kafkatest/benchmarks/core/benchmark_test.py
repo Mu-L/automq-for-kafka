@@ -66,13 +66,13 @@ class Benchmark(Test):
         self.kafka.start()
 
     @cluster(num_nodes=5)
-    @parametrize(acks=1, topic=TOPIC_REP_ONE)
-    @parametrize(acks=1, topic=TOPIC_REP_THREE)
-    @parametrize(acks=-1, topic=TOPIC_REP_THREE)
+    @parametrize(acks=1, topic=TOPIC_REP_ONE, metadata_quorum=quorum.remote_kraft)
+    @parametrize(acks=1, topic=TOPIC_REP_THREE, metadata_quorum=quorum.remote_kraft)
+    @parametrize(acks=-1, topic=TOPIC_REP_THREE, metadata_quorum=quorum.remote_kraft)
     @matrix(acks=[1], topic=[TOPIC_REP_THREE], message_size=[10, 100, 1000, 10000, 100000], compression_type=["none", "snappy"], security_protocol=['SSL'], tls_version=['TLSv1.2', 'TLSv1.3'], metadata_quorum=quorum.all)
     @matrix(acks=[1], topic=[TOPIC_REP_THREE], message_size=[10, 100, 1000, 10000, 100000], compression_type=["none", "snappy"], security_protocol=['PLAINTEXT'], metadata_quorum=quorum.all)
     @cluster(num_nodes=7)
-    @parametrize(acks=1, topic=TOPIC_REP_THREE, num_producers=3)
+    @parametrize(acks=1, topic=TOPIC_REP_THREE, num_producers=3, metadata_quorum=quorum.remote_kraft)
     def test_producer_throughput(self, acks, topic, num_producers=1, message_size=DEFAULT_RECORD_SIZE,
                                  compression_type="none", security_protocol='PLAINTEXT', tls_version=None, client_version=str(DEV_BRANCH),
                                  broker_version=str(DEV_BRANCH), metadata_quorum=quorum.remote_kraft):
