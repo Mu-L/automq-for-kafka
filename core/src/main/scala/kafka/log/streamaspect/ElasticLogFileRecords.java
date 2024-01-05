@@ -17,7 +17,9 @@
 
 package kafka.log.streamaspect;
 
+import com.automq.stream.api.FetchResult;
 import com.automq.stream.api.ReadOptions;
+import com.automq.stream.api.RecordBatchWithContext;
 import com.automq.stream.s3.DirectByteBufAlloc;
 import com.automq.stream.s3.context.AppendContext;
 import com.automq.stream.s3.context.FetchContext;
@@ -26,11 +28,8 @@ import com.automq.stream.utils.FutureUtil;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.CompositeByteBuf;
 import io.netty.buffer.Unpooled;
-import com.automq.stream.api.FetchResult;
-import com.automq.stream.api.RecordBatchWithContext;
 import io.opentelemetry.api.common.Attributes;
 import kafka.log.stream.s3.telemetry.ContextUtils;
-import kafka.log.stream.s3.telemetry.TelemetryConstants;
 import org.apache.kafka.common.network.TransferableChannel;
 import org.apache.kafka.common.record.AbstractRecords;
 import org.apache.kafka.common.record.ConvertedRecords;
@@ -113,13 +112,13 @@ public class ElasticLogFileRecords {
             ReadOptions readOptions = ReadOptions.builder().fastRead(ReadHint.isFastRead()).pooledBuf(true).build();
             FetchContext fetchContext = ContextUtils.creaetFetchContext();
             fetchContext.setReadOptions(readOptions);
-            Attributes attributes = Attributes.builder()
-                    .put(TelemetryConstants.START_OFFSET_NAME, startOffset)
-                    .put(TelemetryConstants.END_OFFSET_NAME, maxOffset)
-                    .put(TelemetryConstants.MAX_BYTES_NAME, maxSize)
-                    .build();
+            // Attributes attributes = Attributes.builder()
+            //         .put(TelemetryConstants.START_OFFSET_NAME, startOffset)
+            //         .put(TelemetryConstants.END_OFFSET_NAME, maxOffset)
+            //         .put(TelemetryConstants.MAX_BYTES_NAME, maxSize)
+            //         .build();
             try {
-                return TraceUtils.runWithSpanAsync(fetchContext, attributes, "ElasticLogFileRecords::read",
+                return TraceUtils.runWithSpanAsync(fetchContext, Attributes.empty(), "ElasticLogFileRecords::read",
                         () -> readAll0(fetchContext, startOffset, maxOffset, maxSize));
             } catch (Throwable ex) {
                 return CompletableFuture.failedFuture(ex);
