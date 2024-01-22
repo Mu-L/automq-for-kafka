@@ -117,6 +117,7 @@ public class GenerateStartCmdCmd {
                     + "--override log.dirs=/root/kraft-broker-logs "
                     + "--override s3.wal.path=/root/kraft-broker-logs/s3wal "
                     + "--override controller.quorum.voters=%s "
+                    + "--override autobalancer.controller.enable=true "
                     + "--override listeners=%s ", parameter.s3Url, controllerNodeId, controllerGroupConfig.getQuorumVoters(), controllerGroupConfig.getListenerMap().get(controllerNodeId)));
             } else {
                 System.out.println(String.format("bin/kafka-server-start.sh "
@@ -126,6 +127,7 @@ public class GenerateStartCmdCmd {
                     + "--override log.dirs=/root/kraft-broker-logs "
                     + "--override s3.wal.path=/root/kraft-broker-logs/s3wal "
                     + "--override controller.quorum.voters=%s "
+                    + "--override autobalancer.controller.enable=true "
                     + "--override listeners=%s "
                     + "--override advertised.listeners=%s ", parameter.s3Url, controllerNodeId, controllerGroupConfig.getQuorumVoters(), controllerGroupConfig.getListenerMap().get(controllerNodeId), controllerGroupConfig.getAdvertisedListenerMap().get(controllerNodeId)));
             }
@@ -140,6 +142,7 @@ public class GenerateStartCmdCmd {
                 + "--override log.dirs=/root/kraft-broker-logs "
                 + "--override s3.wal.path=/root/kraft-broker-logs/s3wal "
                 + "--override controller.quorum.voters=%s "
+                + "--override autobalancer.controller.enable=true "
                 + "--override listeners=%s "
                 + "--override advertised.listeners=%s ", parameter.s3Url, brokerNodeId, brokerGroupConfig.getQuorumVoters(), brokerGroupConfig.getListenerMap().get(brokerNodeId), brokerGroupConfig.getAdvertisedListenerMap().get(brokerNodeId)));
             System.out.println();
