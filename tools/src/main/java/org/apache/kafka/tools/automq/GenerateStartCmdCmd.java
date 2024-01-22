@@ -114,8 +114,8 @@ public class GenerateStartCmdCmd {
                     + "--s3-url=\"%s\" "
                     + "--override process.roles=controller "
                     + "--override node.id=%s "
-                    + "--override log.dirs=/tmp/kraft-broker-logs "
-                    + "--override s3.wal.path=/tmp/kraft-broker-logs/s3wal "
+                    + "--override log.dirs=/root/kraft-broker-logs "
+                    + "--override s3.wal.path=/root/kraft-broker-logs/s3wal "
                     + "--override controller.quorum.voters=%s "
                     + "--override listeners=%s ", parameter.s3Url, controllerNodeId, controllerGroupConfig.getQuorumVoters(), controllerGroupConfig.getListenerMap().get(controllerNodeId)));
             } else {
@@ -123,8 +123,8 @@ public class GenerateStartCmdCmd {
                     + "--s3-url=\"%s\" "
                     + "--override process.roles=broker,controller "
                     + "--override node.id=%s "
-                    + "--override log.dirs=/tmp/kraft-broker-logs "
-                    + "--override s3.wal.path=/tmp/kraft-broker-logs/s3wal "
+                    + "--override log.dirs=/root/kraft-broker-logs "
+                    + "--override s3.wal.path=/root/kraft-broker-logs/s3wal "
                     + "--override controller.quorum.voters=%s "
                     + "--override listeners=%s "
                     + "--override advertised.listeners=%s ", parameter.s3Url, controllerNodeId, controllerGroupConfig.getQuorumVoters(), controllerGroupConfig.getListenerMap().get(controllerNodeId), controllerGroupConfig.getAdvertisedListenerMap().get(controllerNodeId)));
@@ -137,8 +137,8 @@ public class GenerateStartCmdCmd {
                 + "--s3-url=\"%s\" "
                 + "--override process.roles=broker "
                 + "--override node.id=%s "
-                + "--override log.dirs=/tmp/kraft-broker-logs "
-                + "--override s3.wal.path=/tmp/kraft-broker-logs/s3wal "
+                + "--override log.dirs=/root/kraft-broker-logs "
+                + "--override s3.wal.path=/root/kraft-broker-logs/s3wal "
                 + "--override controller.quorum.voters=%s "
                 + "--override listeners=%s "
                 + "--override advertised.listeners=%s ", parameter.s3Url, brokerNodeId, brokerGroupConfig.getQuorumVoters(), brokerGroupConfig.getListenerMap().get(brokerNodeId), brokerGroupConfig.getAdvertisedListenerMap().get(brokerNodeId)));
