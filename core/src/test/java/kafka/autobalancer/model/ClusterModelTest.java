@@ -31,7 +31,8 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 @Tag("S3Unit")
 public class ClusterModelTest {
@@ -116,7 +117,7 @@ public class ClusterModelTest {
 
         // create on non-exist broker
         PartitionRecord partitionRecord = new PartitionRecord()
-                .setReplicas(List.of(brokerId, 2))
+                .setLeader(2)
                 .setTopicId(topicId)
                 .setPartitionId(partition);
         clusterModel.onPartitionCreate(partitionRecord);
@@ -137,7 +138,7 @@ public class ClusterModelTest {
         clusterModel.onPartitionCreate(partitionRecord);
         Assertions.assertNull(clusterModel.replicaUpdater(brokerId, tp));
 
-        partitionRecord.setReplicas(List.of(brokerId));
+        partitionRecord.setLeader(brokerId);
         clusterModel.onPartitionCreate(partitionRecord);
         Assertions.assertEquals(tp, clusterModel.replicaUpdater(brokerId, tp).topicPartition());
     }
@@ -154,7 +155,7 @@ public class ClusterModelTest {
 
         // reassign on non-exist broker
         PartitionChangeRecord partitionChangeRecord = new PartitionChangeRecord()
-                .setReplicas(List.of(newBrokerId, 3))
+                .setLeader(3)
                 .setTopicId(topicId)
                 .setPartitionId(partition);
         clusterModel.onPartitionChange(partitionChangeRecord);
@@ -179,13 +180,13 @@ public class ClusterModelTest {
                 .setBrokerId(oldBrokerId);
         clusterModel.onBrokerRegister(brokerRecord2);
         PartitionRecord partitionRecord = new PartitionRecord()
-                .setReplicas(List.of(oldBrokerId))
+                .setLeader(oldBrokerId)
                 .setTopicId(topicId)
                 .setPartitionId(partition);
         clusterModel.onPartitionCreate(partitionRecord);
         Assertions.assertEquals(tp, clusterModel.replicaUpdater(oldBrokerId, tp).topicPartition());
 
-        partitionChangeRecord.setReplicas(List.of(newBrokerId));
+        partitionChangeRecord.setLeader(newBrokerId);
         clusterModel.onPartitionChange(partitionChangeRecord);
         Assertions.assertEquals(tp, clusterModel.replicaUpdater(newBrokerId, tp).topicPartition());
         Assertions.assertNull(clusterModel.replicaUpdater(oldBrokerId, tp));
@@ -216,7 +217,7 @@ public class ClusterModelTest {
                 .setTopicId(topicId);
         clusterModel.onTopicCreate(topicRecord);
         PartitionRecord partitionRecord = new PartitionRecord()
-                .setReplicas(List.of(brokerId))
+                .setLeader(brokerId)
                 .setTopicId(topicId)
                 .setPartitionId(partition);
         clusterModel.onPartitionCreate(partitionRecord);
@@ -227,5 +228,54 @@ public class ClusterModelTest {
     @Test
     public void testSnapshot() {
 
+    }
+
+    @Test
+    public void testMetricsTime() {
+        RecordClusterModel clusterModel = new RecordClusterModel();
+        String topicName = "testTopic";
+        Uuid topicId = Uuid.randomUuid();
+        int partition = 0;
+        int partition1 = 1;
+        int brokerId = 1;
+
+        RegisterBrokerRecord registerBrokerRecord = new RegisterBrokerRecord()
+                .setBrokerId(brokerId);
+        clusterModel.onBrokerRegister(registerBrokerRecord);
+        TopicRecord topicRecord = new TopicRecord()
+                .setName(topicName)
+                .setTopicId(topicId);
+        clusterModel.onTopicCreate(topicRecord);
+        PartitionRecord partitionRecord = new PartitionRecord()
+                .setLeader(brokerId)
+                .setTopicId(topicId)
+                .setPartitionId(partition);
+        clusterModel.onPartitionCreate(partitionRecord);
+        PartitionRecord partitionRecord1 = new PartitionRecord()
+                .setLeader(brokerId)
+                .setTopicId(topicId)
+                .setPartitionId(partition1);
+        clusterModel.onPartitionCreate(partitionRecord1);
+
+        long now = System.currentTimeMillis();
+
+        Assertions.assertTrue(clusterModel.updateBrokerMetrics(brokerId, new HashMap<>(), now));
+        TopicPartitionMetrics topicPartitionMetrics = new TopicPartitionMetrics(now - 1000, brokerId, "", topicName, partition);
+        topicPartitionMetrics.put(RawMetricTypes.TOPIC_PARTITION_BYTES_IN, 10);
+        topicPartitionMetrics.put(RawMetricTypes.TOPIC_PARTITION_BYTES_OUT, 10);
+        topicPartitionMetrics.put(RawMetricTypes.PARTITION_SIZE, 10);
+        Assertions.assertTrue(clusterModel.updateTopicPartitionMetrics(topicPartitionMetrics.brokerId(),
+                new TopicPartition(topicName, partition), topicPartitionMetrics.getMetricValueMap(), topicPartitionMetrics.time()));
+
+        topicPartitionMetrics = new TopicPartitionMetrics(now - 2000, brokerId, "", topicName, partition1);
+        topicPartitionMetrics.put(RawMetricTypes.TOPIC_PARTITION_BYTES_IN, 10);
+        topicPartitionMetrics.put(RawMetricTypes.TOPIC_PARTITION_BYTES_OUT, 10);
+        topicPartitionMetrics.put(RawMetricTypes.PARTITION_SIZE, 10);
+        Assertions.assertTrue(clusterModel.updateTopicPartitionMetrics(topicPartitionMetrics.brokerId(),
+                new TopicPartition(topicName, partition1), topicPartitionMetrics.getMetricValueMap(), topicPartitionMetrics.time()));
+
+        Map<Integer, Long> metricsTimeMap = clusterModel.calculateBrokerLatestMetricsTime();
+        Assertions.assertEquals(1, metricsTimeMap.size());
+        Assertions.assertEquals(now - 2000, metricsTimeMap.get(brokerId));
     }
 }

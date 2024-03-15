@@ -1,18 +1,12 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Copyright 2024, AutoMQ CO.,LTD.
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * Use of this software is governed by the Business Source License
+ * included in the file BSL.md
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * As of the Change Date specified in that file, in accordance with
+ * the Business Source License, use of this software will be governed
+ * by the Apache License, Version 2.0
  */
 package com.automq.s3shell.sdk.model;
 
@@ -22,8 +16,6 @@ public class S3Url {
 
     final String s3AccessKey;
     final String s3SecretKey;
-
-    final AuthMethod s3AuthMethod;
 
     final String s3Region;
 
@@ -39,12 +31,11 @@ public class S3Url {
 
     final boolean s3PathStyle;
 
-    public S3Url(String s3AccessKey, String s3SecretKey, AuthMethod s3AuthMethod, String s3Region,
+    public S3Url(String s3AccessKey, String s3SecretKey, String s3Region,
         EndpointProtocol endpointProtocol, String s3Endpoint, String s3DataBucket, String s3OpsBucket, String clusterId,
         boolean s3PathStyle) {
         this.s3AccessKey = s3AccessKey;
         this.s3SecretKey = s3SecretKey;
-        this.s3AuthMethod = s3AuthMethod;
         this.s3Region = s3Region;
         this.endpointProtocol = endpointProtocol;
         this.s3Endpoint = s3Endpoint;
@@ -52,6 +43,19 @@ public class S3Url {
         this.s3OpsBucket = s3OpsBucket;
         this.clusterId = clusterId;
         this.s3PathStyle = s3PathStyle;
+    }
+
+    /**
+     * @param args input args to start AutoMQ
+     * @return s3Url value from args, or null if not found
+     */
+    public static String parseS3UrlValFromArgs(String[] args) {
+        for (String arg : args) {
+            if (arg.startsWith("--s3-url=")) {
+                return arg.substring("--s3-url=".length());
+            }
+        }
+        return null;
     }
 
     public static S3Url parse(String s3Url) throws IllegalArgumentException {
@@ -66,7 +70,6 @@ public class S3Url {
 
         String accessKey = null;
         String secretKey = null;
-        AuthMethod authMethod = null;
         String region = null;
         EndpointProtocol protocol = null;
         String dataBucket = null;
@@ -90,9 +93,6 @@ public class S3Url {
                 case "s3-secret-key":
                     secretKey = value;
                     break;
-                case "s3-auth-method":
-                    authMethod = AuthMethod.getByName(value);
-                    break;
                 case "s3-region":
                     region = value;
                     break;
@@ -109,14 +109,14 @@ public class S3Url {
                     clusterId = value;
                     break;
                 case "s3-path-style":
-                    s3PathStyle = Boolean.valueOf(value);
+                    s3PathStyle = Boolean.parseBoolean(value);
                     break;
                 default:
                     throw new IllegalArgumentException("Unknown parameter: " + key);
             }
         }
 
-        return new S3Url(accessKey, secretKey, authMethod, region, protocol, s3Endpoint, dataBucket, opsBucket, clusterId, s3PathStyle);
+        return new S3Url(accessKey, secretKey, region, protocol, s3Endpoint, dataBucket, opsBucket, clusterId, s3PathStyle);
     }
 
     public String getS3AccessKey() {
@@ -125,10 +125,6 @@ public class S3Url {
 
     public String getS3SecretKey() {
         return s3SecretKey;
-    }
-
-    public AuthMethod getS3AuthMethod() {
-        return s3AuthMethod;
     }
 
     public String getS3Region() {

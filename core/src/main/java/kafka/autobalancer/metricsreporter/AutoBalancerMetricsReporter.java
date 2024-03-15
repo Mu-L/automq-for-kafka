@@ -1,21 +1,12 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Copyright 2024, AutoMQ CO.,LTD.
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * Use of this software is governed by the Business Source License
+ * included in the file BSL.md
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-/*
- * Some portion of this file Copyright 2017 LinkedIn Corp. Licensed under the BSD 2-Clause License (the "License"). See License in the project root for license information.
+ * As of the Change Date specified in that file, in accordance with
+ * the Business Source License, use of this software will be governed
+ * by the Apache License, Version 2.0
  */
 
 package kafka.autobalancer.metricsreporter;
@@ -76,11 +67,12 @@ public class AutoBalancerMetricsReporter implements MetricsRegistryListener, Met
     private int numMetricSendFailure = 0;
     private volatile boolean shutdown = false;
     private int metricsReporterCreateRetries;
+    private long lastErrorReportTime = 0;
 
     static String getBootstrapServers(Map<String, ?> configs) {
         Object port = configs.get("port");
         String listeners = String.valueOf(configs.get(KafkaConfig.ListenersProp()));
-        if (!"null".equals(listeners) && listeners.length() != 0) {
+        if (!"null".equals(listeners) && !listeners.isEmpty()) {
             // See https://kafka.apache.org/documentation/#listeners for possible responses. If multiple listeners are configured, this function
             // picks the first listener in the list of listeners. Hence, users of this config must adjust their order accordingly.
             String firstListener = listeners.split("\\s*,\\s*")[0];
@@ -300,6 +292,10 @@ public class AutoBalancerMetricsReporter implements MetricsRegistryListener, Met
         producer.send(producerRecord, (recordMetadata, e) -> {
             if (e != null) {
                 numMetricSendFailure++;
+                if (System.currentTimeMillis() - lastErrorReportTime > 10000) {
+                    lastErrorReportTime = System.currentTimeMillis();
+                    LOGGER.error("Failed to send auto balancer metric", e);
+                }
             }
         });
     }

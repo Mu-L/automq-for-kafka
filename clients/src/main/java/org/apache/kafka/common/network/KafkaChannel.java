@@ -202,12 +202,20 @@ public class KafkaChannel implements AutoCloseable {
     }
 
     public void disconnect() {
+        release();
         disconnected = true;
         if (state == ChannelState.NOT_CONNECTED && remoteAddress != null) {
             //if we captured the remote address we can provide more information
             state = new ChannelState(ChannelState.State.NOT_CONNECTED, remoteAddress.toString());
         }
         transportLayer.disconnect();
+    }
+
+    private void release() {
+        if (send != null) {
+            send.release();
+        }
+        waitingSend.forEach(NetworkSend::release);
     }
 
     public void state(ChannelState state) {
@@ -443,12 +451,7 @@ public class KafkaChannel implements AutoCloseable {
             return 0;
 
         midWrite = true;
-        try {
-            return send.writeTo(transportLayer);
-        } catch (IOException e) {
-            send.release();
-            throw e;
-        }
+        return send.writeTo(transportLayer);
     }
 
     /**

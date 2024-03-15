@@ -1,29 +1,30 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Copyright 2024, AutoMQ CO.,LTD.
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * Use of this software is governed by the Business Source License
+ * included in the file BSL.md
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * As of the Change Date specified in that file, in accordance with
+ * the Business Source License, use of this software will be governed
+ * by the Apache License, Version 2.0
  */
 
 package kafka.autobalancer.goals;
 
+import com.automq.stream.utils.LogContext;
 import kafka.autobalancer.common.Action;
+import kafka.autobalancer.common.ActionType;
+import kafka.autobalancer.common.AutoBalancerConstants;
 import kafka.autobalancer.model.BrokerUpdater;
 import kafka.autobalancer.model.ClusterModelSnapshot;
-import kafka.autobalancer.model.ModelUtils;
 import kafka.autobalancer.model.TopicPartitionReplicaUpdater;
+import org.slf4j.Logger;
 
+import java.util.AbstractMap;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -32,7 +33,42 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 public abstract class AbstractGoal implements Goal {
+    private static final Logger LOGGER = new LogContext().logger(AutoBalancerConstants.AUTO_BALANCER_LOGGER_CLAZZ);
     protected static final double POSITIVE_ACTION_SCORE_THRESHOLD = 0.5;
+
+    protected Optional<Action> tryMovePartitionOut(ClusterModelSnapshot cluster,
+                                                 TopicPartitionReplicaUpdater.TopicPartitionReplica replica,
+                                                 BrokerUpdater.Broker srcBroker,
+                                                 List<BrokerUpdater.Broker> candidates,
+                                                 Collection<Goal> goalsByPriority) {
+        List<Map.Entry<Action, Double>> candidateActionScores = new ArrayList<>();
+        for (BrokerUpdater.Broker candidate : candidates) {
+            Action action = new Action(ActionType.MOVE, replica.getTopicPartition(), srcBroker.getBrokerId(), candidate.getBrokerId());
+            calculateCandidateActionScores(candidateActionScores, goalsByPriority, action, cluster);
+        }
+        LOGGER.debug("try move partition {} out for broker {}, all possible action score: {} on goal {}", replica.getTopicPartition(),
+                srcBroker.getBrokerId(), candidateActionScores, name());
+        return getAcceptableAction(candidateActionScores);
+    }
+
+    protected void calculateCandidateActionScores(List<Map.Entry<Action, Double>> candidateActionScores,
+                                                  Collection<Goal> goalsByPriority, Action action, ClusterModelSnapshot cluster) {
+        Map<Goal, Double> scoreMap = new HashMap<>();
+        boolean isHardGoalViolated = false;
+        for (Goal goal : goalsByPriority) {
+            double score = goal.actionAcceptanceScore(action, cluster);
+            if (goal.type() == GoalType.HARD && score == 0) {
+                isHardGoalViolated = true;
+                break;
+            }
+            scoreMap.put(goal, score);
+        }
+
+        if (!isHardGoalViolated) {
+            LOGGER.debug("action {} scores on each goal: {}", action, scoreMap);
+            candidateActionScores.add(new AbstractMap.SimpleEntry<>(action, normalizeGoalsScore(scoreMap)));
+        }
+    }
 
     /**
      * Calculate the score difference of src and dest. The score should be normalized to [0, 1.0]
@@ -80,9 +116,9 @@ public abstract class AbstractGoal implements Goal {
         }
 
         if (!isSrcBrokerAcceptedBefore && !isSrcBrokerAcceptedAfter) {
-            return score <= POSITIVE_ACTION_SCORE_THRESHOLD ? 0.0 : score;
+            return score < POSITIVE_ACTION_SCORE_THRESHOLD ? 0.0 : score;
         } else if (!isDestBrokerAcceptedBefore && !isDestBrokerAcceptedAfter) {
-            return score <= POSITIVE_ACTION_SCORE_THRESHOLD ? 0.0 : score;
+            return score < POSITIVE_ACTION_SCORE_THRESHOLD ? 0.0 : score;
         }
         return score;
     }
@@ -125,23 +161,15 @@ public abstract class AbstractGoal implements Goal {
         BrokerUpdater.Broker destBrokerBefore = cluster.broker(action.getDestBrokerId());
         BrokerUpdater.Broker srcBrokerAfter = srcBrokerBefore.copy();
         BrokerUpdater.Broker destBrokerAfter = destBrokerBefore.copy();
-        TopicPartitionReplicaUpdater.TopicPartitionReplica srcReplica = cluster.replica(action.getSrcBrokerId(), action.getSrcTopicPartition());
 
-        switch (action.getType()) {
-            case MOVE:
-                ModelUtils.moveReplicaLoad(srcBrokerAfter, destBrokerAfter, srcReplica);
-                break;
-            case SWAP:
-                ModelUtils.moveReplicaLoad(srcBrokerAfter, destBrokerAfter, srcReplica);
-                ModelUtils.moveReplicaLoad(destBrokerAfter, srcBrokerAfter,
-                        cluster.replica(action.getDestBrokerId(), action.getDestTopicPartition()));
-                break;
-            default:
-                return 0.0;
+        if (!moveReplica(action, cluster, srcBrokerAfter, destBrokerAfter)) {
+            return 0.0;
         }
 
         return calculateAcceptanceScore(srcBrokerBefore, destBrokerBefore, srcBrokerAfter, destBrokerAfter);
     }
+
+    protected abstract boolean moveReplica(Action action, ClusterModelSnapshot cluster, BrokerUpdater.Broker src, BrokerUpdater.Broker dest);
 
     @Override
     public Set<BrokerUpdater.Broker> getEligibleBrokers(ClusterModelSnapshot cluster) {

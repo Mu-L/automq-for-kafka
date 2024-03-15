@@ -1,24 +1,19 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Copyright 2024, AutoMQ CO.,LTD.
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * Use of this software is governed by the Business Source License
+ * included in the file BSL.md
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * As of the Change Date specified in that file, in accordance with
+ * the Business Source License, use of this software will be governed
+ * by the Apache License, Version 2.0
  */
 
 package kafka.autobalancer.detector;
 
 import com.automq.stream.utils.LogContext;
 import kafka.autobalancer.common.Action;
+import kafka.autobalancer.common.ActionType;
 import kafka.autobalancer.common.AutoBalancerConstants;
 import kafka.autobalancer.common.AutoBalancerThreadFactory;
 import kafka.autobalancer.executor.ActionExecutorService;
@@ -27,10 +22,14 @@ import kafka.autobalancer.model.BrokerUpdater;
 import kafka.autobalancer.model.ClusterModel;
 import kafka.autobalancer.model.ClusterModelSnapshot;
 import kafka.autobalancer.model.TopicPartitionReplicaUpdater;
+import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -99,8 +98,20 @@ public class AnomalyDetector {
     }
 
     public void detect() {
+        long nextExecutionDelay = detectInterval;
+        try {
+            nextExecutionDelay = detect0();
+        } catch (Exception e) {
+            logger.error("Detect error", e);
+        }
+        logger.info("Detect finished, next detect will be after {} ms", nextExecutionDelay);
+        this.executorService.schedule(this::detect, nextExecutionDelay, TimeUnit.MILLISECONDS);
+    }
+
+    long detect0() {
         if (!this.running) {
-            return;
+            logger.info("Not active controller, skip detect");
+            return detectInterval;
         }
         logger.info("Start detect");
         // The delay in processing kraft log could result in outdated cluster snapshot
@@ -115,23 +126,53 @@ public class AnomalyDetector {
             }
         }
 
-        int availableActionNum = maxActionsNumPerExecution;
+        List<Action> totalActions = new ArrayList<>();
         for (Goal goal : goalsByPriority) {
             if (!this.running) {
                 break;
             }
-            List<Action> actions = goal.optimize(snapshot, goalsByPriority);
-            int size = Math.min(availableActionNum, actions.size());
-            this.actionExecutor.execute(actions.subList(0, size));
-            availableActionNum -= size;
-            if (availableActionNum <= 0) {
-                logger.info("No more action can be executed in this round");
-                break;
+            totalActions.addAll(goal.optimize(snapshot, goalsByPriority));
+        }
+        int totalActionSize = totalActions.size();
+        List<Action> actionsToExecute = checkAndMergeActions(totalActions);
+        logger.info("Total actions num: {}, executable num: {}", totalActionSize, actionsToExecute.size());
+        this.actionExecutor.execute(actionsToExecute);
+
+        return actionsToExecute.size() * this.coolDownIntervalPerActionMs + this.detectInterval;
+    }
+
+    List<Action> checkAndMergeActions(List<Action> actions) throws IllegalStateException {
+        actions = actions.subList(0, Math.min(actions.size(), maxActionsNumPerExecution));
+        List<Action> filteredActions = new ArrayList<>();
+        Map<TopicPartition, Action> actionMergeMap = new HashMap<>();
+        for (Action action : actions) {
+            if (action.getType() == ActionType.SWAP) {
+                Action prevAction = actionMergeMap.remove(action.getSrcTopicPartition());
+                if (prevAction != null && prevAction.getDestBrokerId() != action.getSrcBrokerId()) {
+                    throw new IllegalStateException(String.format("Unmatched action chains for %s, prev: %s, next: %s",
+                            action.getSrcTopicPartition(), prevAction, action));
+                }
+                prevAction = actionMergeMap.remove(action.getDestTopicPartition());
+                if (prevAction != null && prevAction.getDestBrokerId() != action.getDestBrokerId()) {
+                    throw new IllegalStateException(String.format("Unmatched action chains for %s, prev: %s, next: %s",
+                            action.getSrcTopicPartition(), prevAction, action));
+                }
+                filteredActions.add(action);
+                continue;
             }
+            Action prevAction = actionMergeMap.get(action.getSrcTopicPartition());
+            if (prevAction == null) {
+                filteredActions.add(action);
+                actionMergeMap.put(action.getSrcTopicPartition(), action);
+                continue;
+            }
+            if (prevAction.getDestBrokerId() != action.getSrcBrokerId()) {
+                throw new IllegalStateException(String.format("Unmatched action chains for %s, prev: %s, next: %s",
+                        action.getSrcTopicPartition(), prevAction, action));
+            }
+            prevAction.setDestBrokerId(action.getDestBrokerId());
         }
 
-        long nextDelay = (maxActionsNumPerExecution - availableActionNum) * this.coolDownIntervalPerActionMs + this.detectInterval;
-        this.executorService.schedule(this::detect, nextDelay, TimeUnit.MILLISECONDS);
-        logger.info("Detect finished, next detect will be after {} ms", nextDelay);
+        return filteredActions;
     }
 }

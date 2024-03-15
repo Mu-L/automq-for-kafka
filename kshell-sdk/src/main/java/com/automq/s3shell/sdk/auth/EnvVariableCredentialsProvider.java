@@ -1,22 +1,17 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Copyright 2024, AutoMQ CO.,LTD.
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * Use of this software is governed by the Business Source License
+ * included in the file BSL.md
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * As of the Change Date specified in that file, in accordance with
+ * the Business Source License, use of this software will be governed
+ * by the Apache License, Version 2.0
  */
 package com.automq.s3shell.sdk.auth;
 
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 
 public class EnvVariableCredentialsProvider {
@@ -24,9 +19,21 @@ public class EnvVariableCredentialsProvider {
     public static final String SECRET_KEY_NAME = "KAFKA_S3_SECRET_KEY";
 
     public static AwsCredentialsProvider get() {
+        return EnvVariableCredentialsProvider::create;
+    }
+
+    private static AwsCredentials create() {
         String accessKey = System.getenv(ACCESS_KEY_NAME);
         String secretKey = System.getenv(SECRET_KEY_NAME);
-        return () -> AwsBasicCredentials.create(accessKey, secretKey);
+        // According to the AWS documentation, when we fail to get the credentials in a credential provider,
+        // we should throw a RuntimeException to indicate that the provider is not able to provide the credential.
+        if (accessKey == null) {
+            throw new NullPointerException("Access key is not set");
+        }
+        if (secretKey == null) {
+            throw new NullPointerException("Secret key is not set");
+        }
+        return AwsBasicCredentials.create(accessKey, secretKey);
     }
 
     @Override

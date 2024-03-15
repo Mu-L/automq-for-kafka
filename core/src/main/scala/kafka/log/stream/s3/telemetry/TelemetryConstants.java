@@ -1,18 +1,12 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Copyright 2024, AutoMQ CO.,LTD.
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * Use of this software is governed by the Business Source License
+ * included in the file BSL.md
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * As of the Change Date specified in that file, in accordance with
+ * the Business Source License, use of this software will be governed
+ * by the Apache License, Version 2.0
  */
 
 package kafka.log.stream.s3.telemetry;
@@ -20,6 +14,9 @@ package kafka.log.stream.s3.telemetry;
 import io.opentelemetry.api.common.AttributeKey;
 
 public class TelemetryConstants {
+    // The maximum number of unique attribute combinations for a single metric
+    public static final int CARDINALITY_LIMIT = 20000;
+    public static final String COMMON_JMX_YAML_CONFIG_PATH = "/jmx/rules/common.yaml";
     public static final String BROKER_JMX_YAML_CONFIG_PATH = "/jmx/rules/broker.yaml";
     public static final String CONTROLLER_JMX_YAML_CONFIG_PATH = "/jmx/rules/controller.yaml";
     public static final String TELEMETRY_SCOPE_NAME = "automq_for_kafka";

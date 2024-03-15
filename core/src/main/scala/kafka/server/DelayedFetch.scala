@@ -17,14 +17,19 @@
 
 package kafka.server
 
+import com.automq.stream.api.exceptions.FastReadFailFastException
+import com.automq.stream.utils.FutureUtil
 import kafka.log.streamaspect.ReadHint
-import java.util.concurrent.TimeUnit
+
+import java.util.concurrent.{ExecutorService, Executors, ThreadPoolExecutor, TimeUnit}
 import kafka.metrics.KafkaMetricsGroup
+import kafka.server.DelayedFetch.DELAYED_FETCH_EXECUTOR
 import org.apache.kafka.common.TopicIdPartition
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.{UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET}
+import org.apache.kafka.common.utils.ThreadUtils
 
 import scala.collection._
 
@@ -34,6 +39,15 @@ case class FetchPartitionStatus(startOffsetMetadata: LogOffsetMetadata, fetchInf
     "[startOffsetMetadata: " + startOffsetMetadata +
       ", fetchInfo: " + fetchInfo +
       "]"
+  }
+}
+
+object DelayedFetch {
+  private val DELAYED_FETCH_EXECUTOR: ExecutorService = Executors.newFixedThreadPool(8, ThreadUtils.createThreadFactory("delayed-fetch-executor-%d", true))
+
+  def executorQueueSize: Int = DELAYED_FETCH_EXECUTOR match {
+    case tp: ThreadPoolExecutor => tp.getQueue.size
+    case _ => 0
   }
 }
 
@@ -163,19 +177,44 @@ class DelayedFetch(
    * Upon completion, read whatever data is available and pass to the complete callback
    */
   override def onComplete(): Unit = {
+    // AutoMQ for Kafka inject start
+    DELAYED_FETCH_EXECUTOR.submit(new Runnable {
+      override def run(): Unit = {
+        try {
+          onComplete0()
+        } catch {
+          case e: Throwable => logger.error("delayed fetch fail", e)
+        }
+      }
+    })
+    // AutoMQ for Kafka inject end
+  }
+
+  private def onComplete0(): Unit = {
     val fetchInfos = fetchPartitionStatus.map { case (tp, status) =>
       tp -> status.fetchInfo
     }
 
     // AutoMQ for Kafka inject start
     ReadHint.markReadAll()
-    val logReadResults = replicaManager.readFromLocalLogV2(
-      params,
-      fetchInfos,
-      quota,
-      readFromPurgatory = true,
-      limiter = limiter,
-    )
+    // in delayed fetch, we only try fast read
+    ReadHint.markFastRead()
+    var logReadResults: Seq[(TopicIdPartition, LogReadResult)] = null
+    try {
+      logReadResults = replicaManager.readFromLocalLogV2(
+        params,
+        fetchInfos,
+        quota,
+        readFromPurgatory = true,
+        limiter = limiter,
+      )
+    } catch {
+      case e: Throwable =>
+        logReadResults = ReplicaManager.emptyReadResults(fetchPartitionStatus.map(_._1))
+        if (!FutureUtil.cause(e).isInstanceOf[FastReadFailFastException]) {
+          error(s"Unexpected error in delayed fetch: $params $fetchInfos ", e)
+        }
+    }
     ReadHint.clear()
     // AutoMQ for Kafka inject end
 

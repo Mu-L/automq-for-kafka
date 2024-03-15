@@ -48,7 +48,8 @@ class TransactionalMessageCopier(KafkaPathResolverMixin, BackgroundThreadService
     def __init__(self, context, num_nodes, kafka, transactional_id, consumer_group,
                  input_topic, input_partition, output_topic, max_messages=-1,
                  transaction_size=1000, transaction_timeout=None, enable_random_aborts=True,
-                 use_group_metadata=False, group_mode=False):
+                 use_group_metadata=False, group_mode=False, producer_block_timeout_ms=None,
+                 consumer_default_api_timeout_ms=None):
         super(TransactionalMessageCopier, self).__init__(context, num_nodes)
         self.kafka = kafka
         self.transactional_id = transactional_id
@@ -70,6 +71,8 @@ class TransactionalMessageCopier(KafkaPathResolverMixin, BackgroundThreadService
             "org.apache.kafka.clients.producer": "TRACE",
             "org.apache.kafka.clients.consumer": "TRACE"
         }
+        self.producer_block_timeout_ms = producer_block_timeout_ms
+        self.consumer_default_api_timeout_ms = consumer_default_api_timeout_ms
 
     def _worker(self, idx, node):
         node.account.ssh("mkdir -p %s" % TransactionalMessageCopier.PERSISTENT_ROOT,
@@ -124,6 +127,9 @@ class TransactionalMessageCopier(KafkaPathResolverMixin, BackgroundThreadService
         cmd += " --input-partition %s" % str(self.input_partition)
         cmd += " --transaction-size %s" % str(self.transaction_size)
 
+        if self.producer_block_timeout_ms is not None:
+            cmd += " --producer-block-timeout-ms %s" % str(self.producer_block_timeout_ms)
+
         if self.transaction_timeout is not None:
             cmd += " --transaction-timeout %s" % str(self.transaction_timeout)
 
@@ -135,6 +141,9 @@ class TransactionalMessageCopier(KafkaPathResolverMixin, BackgroundThreadService
 
         if self.group_mode:
             cmd += " --group-mode"
+
+        if self.consumer_default_api_timeout_ms is not None:
+            cmd += " --consumer-default-api-timeout-ms %s" % str(self.consumer_default_api_timeout_ms)
 
         if self.max_messages > 0:
             cmd += " --max-messages %s" % str(self.max_messages)

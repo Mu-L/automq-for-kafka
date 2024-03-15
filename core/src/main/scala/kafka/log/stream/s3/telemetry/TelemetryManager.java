@@ -1,18 +1,12 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Copyright 2024, AutoMQ CO.,LTD.
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * Use of this software is governed by the Business Source License
+ * included in the file BSL.md
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * As of the Change Date specified in that file, in accordance with
+ * the Business Source License, use of this software will be governed
+ * by the Apache License, Version 2.0
  */
 
 package kafka.log.stream.s3.telemetry;
@@ -27,7 +21,6 @@ import io.opentelemetry.api.metrics.Meter;
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
 import io.opentelemetry.context.propagation.ContextPropagators;
 import io.opentelemetry.context.propagation.TextMapPropagator;
-import io.opentelemetry.exporter.logging.LoggingMetricExporter;
 import io.opentelemetry.exporter.otlp.http.metrics.OtlpHttpMetricExporter;
 import io.opentelemetry.exporter.otlp.http.metrics.OtlpHttpMetricExporterBuilder;
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter;
@@ -37,22 +30,25 @@ import io.opentelemetry.exporter.prometheus.PrometheusHttpServer;
 import io.opentelemetry.instrumentation.jmx.engine.JmxMetricInsight;
 import io.opentelemetry.instrumentation.jmx.engine.MetricConfiguration;
 import io.opentelemetry.instrumentation.jmx.yaml.RuleParser;
+import io.opentelemetry.instrumentation.runtimemetrics.java8.BufferPools;
 import io.opentelemetry.instrumentation.runtimemetrics.java8.Cpu;
 import io.opentelemetry.instrumentation.runtimemetrics.java8.GarbageCollector;
 import io.opentelemetry.instrumentation.runtimemetrics.java8.MemoryPools;
+import io.opentelemetry.instrumentation.runtimemetrics.java8.Threads;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.OpenTelemetrySdkBuilder;
 import io.opentelemetry.sdk.metrics.SdkMeterProvider;
 import io.opentelemetry.sdk.metrics.SdkMeterProviderBuilder;
-import io.opentelemetry.sdk.metrics.data.AggregationTemporality;
 import io.opentelemetry.sdk.metrics.export.MetricReader;
 import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader;
 import io.opentelemetry.sdk.metrics.export.PeriodicMetricReaderBuilder;
+import io.opentelemetry.sdk.metrics.internal.SdkMeterProviderUtil;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SpanProcessor;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
 import io.opentelemetry.semconv.ResourceAttributes;
+import org.apache.kafka.server.metrics.s3stream.S3StreamKafkaMetricsManager;
 import kafka.server.KafkaConfig;
 import kafka.server.KafkaRaftServer;
 import org.apache.commons.lang3.StringUtils;
@@ -63,18 +59,17 @@ import scala.collection.immutable.Set;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.InetAddress;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
 
 public class TelemetryManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(TelemetryManager.class);
     private static final Integer EXPORTER_TIMEOUT_MS = 5000;
-    private static java.util.logging.Logger metricsLogger;
     private static OpenTelemetrySdk openTelemetrySdk;
     private static boolean traceEnable = false;
     private final KafkaConfig kafkaConfig;
@@ -89,6 +84,9 @@ public class TelemetryManager {
         this.clusterId = clusterId;
         this.metricReaderList = new ArrayList<>();
         this.autoCloseables = new ArrayList<>();
+        // redirect JUL from OpenTelemetry SDK to SLF4J
+        SLF4JBridgeHandler.removeHandlersForRootLogger();
+        SLF4JBridgeHandler.install();
         init();
     }
 
@@ -104,13 +102,22 @@ public class TelemetryManager {
         return traceEnable;
     }
 
-    private void init() {
-        String nodeType = getNodeType();
+    private String getHostName() {
+        try {
+            return InetAddress.getLocalHost().getHostName();
+        } catch (Exception e) {
+            LOGGER.error("Failed to get host name", e);
+            return "unknown";
+        }
+    }
 
+    private void init() {
         Attributes baseAttributes = Attributes.builder()
-                .put(ResourceAttributes.SERVICE_NAMESPACE, clusterId)
-                .put(ResourceAttributes.SERVICE_NAME, nodeType)
+                .put(ResourceAttributes.SERVICE_NAME, clusterId)
                 .put(ResourceAttributes.SERVICE_INSTANCE_ID, String.valueOf(kafkaConfig.nodeId()))
+                .put(ResourceAttributes.HOST_NAME, getHostName())
+                .put("instance", String.valueOf(kafkaConfig.nodeId())) // for Aliyun Prometheus compatibility
+                .put("node_type", getNodeType())
                 .build();
 
         Resource resource = Resource.empty().toBuilder()
@@ -147,6 +154,9 @@ public class TelemetryManager {
             Meter meter = openTelemetrySdk.getMeter(TelemetryConstants.TELEMETRY_SCOPE_NAME);
             S3StreamMetricsManager.configure(new MetricsConfig(metricsLevel(), Attributes.empty()));
             S3StreamMetricsManager.initMetrics(meter, TelemetryConstants.KAFKA_METRICS_PREFIX);
+
+            S3StreamKafkaMetricsManager.configure(new MetricsConfig(metricsLevel(), Attributes.empty()));
+            S3StreamKafkaMetricsManager.initMetrics(meter, TelemetryConstants.KAFKA_METRICS_PREFIX);
         }
 
         LOGGER.info("Instrument manager initialized with metrics: {} (level: {}), trace: {} report interval: {}",
@@ -162,6 +172,7 @@ public class TelemetryManager {
         MetricConfiguration conf = new MetricConfiguration();
 
         Set<KafkaRaftServer.ProcessRole> roles = kafkaConfig.processRoles();
+        buildMetricConfiguration(conf, TelemetryConstants.COMMON_JMX_YAML_CONFIG_PATH);
         if (roles.contains(KafkaRaftServer.BrokerRole$.MODULE$)) {
             buildMetricConfiguration(conf, TelemetryConstants.BROKER_JMX_YAML_CONFIG_PATH);
         }
@@ -181,12 +192,12 @@ public class TelemetryManager {
     }
 
     private void addJvmMetrics() {
-        // set JVM metrics opt-in to prevent metrics conflict.
-        System.setProperty("otel.semconv-stability.opt-in", "jvm");
         // JVM metrics
         autoCloseables.addAll(MemoryPools.registerObservers(openTelemetrySdk));
         autoCloseables.addAll(Cpu.registerObservers(openTelemetrySdk));
         autoCloseables.addAll(GarbageCollector.registerObservers(openTelemetrySdk));
+        autoCloseables.addAll(BufferPools.registerObservers(openTelemetrySdk));
+        autoCloseables.addAll(Threads.registerObservers(openTelemetrySdk));
     }
 
     private MetricsLevel metricsLevel() {
@@ -245,9 +256,6 @@ public class TelemetryManager {
                 case "otlp":
                     initOTLPExporter(sdkMeterProviderBuilder, kafkaConfig);
                     break;
-                case "log":
-                    initLogExporter(sdkMeterProviderBuilder, kafkaConfig);
-                    break;
                 case "prometheus":
                     initPrometheusExporter(sdkMeterProviderBuilder, kafkaConfig);
                     break;
@@ -273,6 +281,7 @@ public class TelemetryManager {
             case "grpc":
                 OtlpGrpcMetricExporterBuilder otlpExporterBuilder = OtlpGrpcMetricExporter.builder()
                         .setEndpoint(otlpExporterHost)
+                        .setCompression(kafkaConfig.s3ExporterOTLPCompressionEnable() ? "gzip" : "none")
                         .setTimeout(Duration.ofMillis(30000));
                 builder = PeriodicMetricReader.builder(otlpExporterBuilder.build());
                 break;
@@ -294,21 +303,9 @@ public class TelemetryManager {
 
         MetricReader periodicReader = builder.setInterval(Duration.ofMillis(kafkaConfig.s3ExporterReportIntervalMs())).build();
         metricReaderList.add(periodicReader);
-        sdkMeterProviderBuilder.registerMetricReader(periodicReader);
+        SdkMeterProviderUtil.registerMetricReaderWithCardinalitySelector(sdkMeterProviderBuilder, periodicReader,
+                instrumentType -> TelemetryConstants.CARDINALITY_LIMIT);
         LOGGER.info("OTLP exporter registered, endpoint: {}, protocol: {}", otlpExporterHost, protocol);
-    }
-
-    private void initLogExporter(SdkMeterProviderBuilder sdkMeterProviderBuilder, KafkaConfig kafkaConfig) {
-        SLF4JBridgeHandler.removeHandlersForRootLogger();
-        SLF4JBridgeHandler.install();
-        MetricReader periodicReader = PeriodicMetricReader.builder(LoggingMetricExporter.create(AggregationTemporality.DELTA))
-                .setInterval(Duration.ofMillis(kafkaConfig.s3ExporterReportIntervalMs()))
-                .build();
-        metricReaderList.add(periodicReader);
-        metricsLogger = java.util.logging.Logger.getLogger(LoggingMetricExporter.class.getName());
-        metricsLogger.setLevel(Level.FINEST);
-        sdkMeterProviderBuilder.registerMetricReader(periodicReader);
-        LOGGER.info("Log exporter registered");
     }
 
     private void initPrometheusExporter(SdkMeterProviderBuilder sdkMeterProviderBuilder, KafkaConfig kafkaConfig) {
@@ -322,16 +319,14 @@ public class TelemetryManager {
                 .setHost(promExporterHost)
                 .setPort(promExporterPort)
                 .build();
-        sdkMeterProviderBuilder.registerMetricReader(prometheusHttpServer);
+        SdkMeterProviderUtil.registerMetricReaderWithCardinalitySelector(sdkMeterProviderBuilder, prometheusHttpServer,
+                instrumentType -> TelemetryConstants.CARDINALITY_LIMIT);
         LOGGER.info("Prometheus exporter registered, host: {}, port: {}", promExporterHost, promExporterPort);
     }
 
     private Optional<String> getOTLPEndpoint(String endpoint) {
         if (StringUtils.isBlank(endpoint)) {
             return Optional.empty();
-        }
-        if (!endpoint.startsWith("http://")) {
-            endpoint = "https://" + endpoint;
         }
         return Optional.of(endpoint);
     }

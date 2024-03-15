@@ -13,9 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# list all extra tests that are part of the suite under the test suite name:
-extra_test_suite:
-  included:
-    - kafkatest/benchmarks
-    - kafkatest/tests/connect
-    - kafkatest/tests/streams
+from contextlib import contextmanager
+
+from ducktape.cluster.remoteaccount import LogMonitor, RemoteAccount
+
+
+@contextmanager
+def get_monitor_with_offset(node: RemoteAccount, log_file: str, offset: int):
+    """
+    Get a LogMonitor for the given node and log file, with the given offset file.
+    """
+    yield LogMonitor(node, log_file, offset)

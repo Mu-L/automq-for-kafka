@@ -29,7 +29,7 @@ import kafka.metrics.KafkaMetricsGroup
 import kafka.server.HostedPartition.Online
 import kafka.server.Limiter.Handler
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.createLogReadResult
+import kafka.server.ReplicaManager.{createLogReadResult, emptyReadResults}
 import kafka.server.checkpoints.{LazyOffsetCheckpoints, OffsetCheckpointFile, OffsetCheckpoints}
 import kafka.server.metadata.ZkMetadataCache
 import kafka.utils.Implicits._
@@ -60,6 +60,8 @@ import org.apache.kafka.common.utils.{ThreadUtils, Time}
 import org.apache.kafka.image.{LocalReplicaChanges, MetadataImage, TopicsDelta}
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
 import org.apache.kafka.server.common.MetadataVersion._
+import org.apache.kafka.server.metrics.s3stream.S3StreamKafkaMetricsManager
+import org.apache.kafka.server.metrics.s3stream.S3StreamKafkaMetricsConstants.{FETCH_EXECUTOR_DELAYED_NAME, FETCH_EXECUTOR_FAST_NAME, FETCH_EXECUTOR_SLOW_NAME, FETCH_LIMITER_FAST_NAME, FETCH_LIMITER_SLOW_NAME}
 
 import java.io.File
 import java.nio.file.{Files, Paths}
@@ -67,13 +69,12 @@ import java.util
 import java.util.Optional
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicReference}
 import java.util.concurrent.locks.Lock
-import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, Executors, TimeUnit}
+import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, Executors, ThreadPoolExecutor, TimeUnit}
 import java.util.function.Consumer
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.{Map, Seq, Set, mutable}
 import scala.compat.java8.OptionConverters._
 import scala.jdk.CollectionConverters._
-import scala.util.Using
 
 /*
  * Result metadata of a log append operation on the log
@@ -192,6 +193,12 @@ object ReplicaManager {
   val HighWatermarkFilename = "replication-offset-checkpoint"
 
   // AutoMQ for Kafka inject start
+
+
+  def emptyReadResults(partitions: Seq[TopicIdPartition]): Seq[(TopicIdPartition, LogReadResult)] = {
+    partitions.map(tp => tp -> createLogReadResult(null))
+  }
+
   def createLogReadResult(e: Throwable): LogReadResult = {
     LogReadResult(info = new FetchDataInfo(LogOffsetMetadata.UnknownOffsetMetadata, MemoryRecords.EMPTY),
       divergingEpoch = None,
@@ -264,10 +271,31 @@ class ReplicaManager(val config: KafkaConfig,
 
   private var logDirFailureHandler: LogDirFailureHandler = _
 
-  val fastFetchExecutor = Executors.newFixedThreadPool(4, ThreadUtils.createThreadFactory("kafka-apis-fast-fetch-executor-%d", true))
-  val slowFetchExecutor = Executors.newFixedThreadPool(12, ThreadUtils.createThreadFactory("kafka-apis-slow-fetch-executor-%d", true))
-  val fastFetchLimiter = new FairLimiter(100 * 1024 * 1024) // 100MiB
-  val slowFetchLimiter = new FairLimiter(100 * 1024 * 1024) // 100MiB
+  private val fastFetchExecutor = Executors.newFixedThreadPool(4, ThreadUtils.createThreadFactory("kafka-apis-fast-fetch-executor-%d", true))
+  private val slowFetchExecutor = Executors.newFixedThreadPool(12, ThreadUtils.createThreadFactory("kafka-apis-slow-fetch-executor-%d", true))
+  private val fetchExecutorQueueSizeGaugeMap = new util.HashMap[String, Integer]()
+  S3StreamKafkaMetricsManager.setFetchPendingTaskNumSupplier(() => {
+    fetchExecutorQueueSizeGaugeMap.put(FETCH_EXECUTOR_FAST_NAME, fastFetchExecutor match {
+      case executor: ThreadPoolExecutor => executor.getQueue.size()
+      case _ => 0
+    })
+    fetchExecutorQueueSizeGaugeMap.put(FETCH_EXECUTOR_SLOW_NAME, slowFetchExecutor match {
+      case executor: ThreadPoolExecutor => executor.getQueue.size()
+      case _ => 0
+    })
+    fetchExecutorQueueSizeGaugeMap.put(FETCH_EXECUTOR_DELAYED_NAME, DelayedFetch.executorQueueSize)
+    fetchExecutorQueueSizeGaugeMap
+  })
+
+  private val fastFetchLimiter = new FairLimiter(100 * 1024 * 1024) // 100MiB
+  private val slowFetchLimiter = new FairLimiter(100 * 1024 * 1024) // 100MiB
+  private val fetchLimiterGaugeMap = new util.HashMap[String, Integer]()
+  S3StreamKafkaMetricsManager.setFetchLimiterPermitNumSupplier(() => {
+    fetchLimiterGaugeMap.put(FETCH_LIMITER_FAST_NAME, fastFetchLimiter.availablePermits())
+    fetchLimiterGaugeMap.put(FETCH_LIMITER_SLOW_NAME, slowFetchLimiter.availablePermits())
+    fetchLimiterGaugeMap
+  })
+
   /**
    * Used to reduce allocation in [[readFromLocalLogV2]]
    */
@@ -512,6 +540,7 @@ class ReplicaManager(val config: KafkaConfig,
         getPartition(topicPartition) match {
           case hostedPartition: HostedPartition.Online =>
             if (allPartitions.remove(topicPartition, hostedPartition)) {
+              brokerTopicStats.removeMetrics(topicPartition)
               maybeRemoveTopicMetrics(topicPartition.topic)
               // AutoMQ for Kafka inject start
               if (ElasticLogManager.enabled()) {
@@ -1034,7 +1063,17 @@ class ReplicaManager(val config: KafkaConfig,
       val logStartOffset = onlinePartition(topicPartition).map(_.logStartOffset).getOrElse(-1L)
       brokerTopicStats.topicStats(topicPartition.topic).failedProduceRequestRate.mark()
       brokerTopicStats.allTopicsStats.failedProduceRequestRate.mark()
-      error(s"Error processing append operation on partition $topicPartition", t)
+      if (t.isInstanceOf[OutOfOrderSequenceException]) {
+        // The following situation can cause OutOfOrderSequenceException, but it could recover from producer retry:
+        // 1. Producer send msg1 to partition1 (on broker0) and the msg1 is inflight (fail after step 3);
+        // 2. Partition1 move to broker1, and broker1 expect msg1;
+        // 3. Producer send msg2 to partition1 (on broker1); (Producer allow 5 inflight messages)
+        // 4. Broker1 expect msg1 but receive msg2, so it will throw OutOfOrderSequenceException;
+        // 5. [Recover] Producer resend msg1 and msg2 to broker1, and broker2 move the seq to msg3;
+        warn(s"[OUT_OF_ORDER] processing append operation on partition $topicPartition", t)
+      } else {
+        error(s"Error processing append operation on partition $topicPartition", t)
+      }
 
       logStartOffset
     }
@@ -1077,7 +1116,8 @@ class ReplicaManager(val config: KafkaConfig,
                    _: RecordTooLargeException |
                    _: RecordBatchTooLargeException |
                    _: CorruptRecordException |
-                   _: KafkaStorageException) =>
+                   _: KafkaStorageException |
+                   _: DuplicateSequenceException) =>
             (topicPartition, LogAppendResult(LogAppendInfo.UnknownLogAppendInfo, Some(e)))
           case rve: RecordValidationException =>
             val logStartOffset = processFailedRecord(topicPartition, rve.invalidException)
@@ -1149,11 +1189,19 @@ class ReplicaManager(val config: KafkaConfig,
             val ex = FutureUtil.cause(e)
             val fastReadFailFast = ex.isInstanceOf[FastReadFailFastException]
             if (fastReadFailFast) {
+              val timer = Time.SYSTEM.timer(params.maxWaitMs)
               slowFetchExecutor.submit(new Runnable {
                 override def run(): Unit = {
                   try {
+                    timer.update()
+                    if (timer.isExpired) {
+                      // return empty response if timeout
+                      responseEmpty(null)
+                      return
+                    }
                     ReadHint.markReadAll()
-                    fetchMessages0(params, fetchInfos, quota, slowFetchLimiter, params.maxWaitMs, responseCallback)
+                    assert(timer.remainingMs() > 0, "Remaining time should be positive")
+                    fetchMessages0(params, fetchInfos, quota, slowFetchLimiter, timer.remainingMs(), responseCallback)
                   } catch {
                     case slowEx: Throwable =>
                       handleError(slowEx)
@@ -1222,12 +1270,21 @@ class ReplicaManager(val config: KafkaConfig,
           fetchPartitionStatus += (topicIdPartition -> FetchPartitionStatus(logOffsetMetadata, partitionData))
         })
       }
+      // release records before delay fetch
+      logReadResults.foreach { case (_, logReadResult) =>
+        logReadResult.info.records match {
+          case r: PooledResource =>
+            r.release()
+          case _ =>
+        }
+      }
       val delayedFetch = new DelayedFetch(
         params = params,
         fetchPartitionStatus = fetchPartitionStatus,
         replicaManager = this,
         quota = quota,
-        // always use the fast fetch limiter in delayed fetch operations
+        // Always use the fast fetch limiter in delayed fetch operations, as when a delayed fetch
+        // operation is completed, it only try to read in the fast path.
         limiter = fastFetchLimiter,
         responseCallback = responseCallback
       )
@@ -1263,12 +1320,6 @@ class ReplicaManager(val config: KafkaConfig,
       math.min(bytesNeed, params.maxBytes)
     }
 
-    def emptyResult(): Seq[(TopicIdPartition, LogReadResult)] = {
-      readPartitionInfo.map { case (tp, _) =>
-        tp -> createLogReadResult(null)
-      }
-    }
-
     val handler: Handler = timeoutMs match {
       case t if t > 0 => limiter.acquire(bytesNeed(), t)
       case _ => limiter.acquire(bytesNeed())
@@ -1278,10 +1329,33 @@ class ReplicaManager(val config: KafkaConfig,
       // handler maybe null if it timed out to acquire from limiter
       // TODO add metrics for this
       // warn(s"Returning emtpy fetch response for fetch request $readPartitionInfo since the wait time exceeds $timeoutMs ms.")
-      emptyResult()
+      emptyReadResults(readPartitionInfo.map(_._1))
     } else {
-      Using.resource(handler) { _ =>
-        readFromLocalLogV2(params, readPartitionInfo, quota, readFromPurgatory)
+      try {
+        var logReadResults = readFromLocalLogV2(params, readPartitionInfo, quota, readFromPurgatory)
+        if (logReadResults.isEmpty) {
+          // release the handler if no logReadResults
+          handler.close()
+        } else {
+          logReadResults.indexWhere(_._2.info.records.sizeInBytes > 0) match {
+            case -1 => // no non-empty read result
+              handler.close()
+            case i => // the first non-empty read result
+              // replace it with a wrapper to release the handler
+              val oldReadResult = logReadResults(i)._2
+              val oldInfo = oldReadResult.info
+              val oldRecords = oldInfo.records
+              val newRecords = new PooledRecords(oldRecords, () => handler.close())
+              val newInfo = oldInfo.copy(records = newRecords)
+              val newReadResult = oldReadResult.copy(info = newInfo)
+              logReadResults = logReadResults.updated(i, logReadResults(i)._1 -> newReadResult)
+          }
+        }
+        logReadResults
+      } catch {
+        case e: Throwable =>
+          handler.close()
+          throw e
       }
     }
   }
@@ -1527,16 +1601,23 @@ class ReplicaManager(val config: KafkaConfig,
     while (partitionIndex < readPartitionInfo.size) {
       val tp = readPartitionInfo(partitionIndex)._1
       val partitionData = readPartitionInfo(partitionIndex)._2
-      val partition = getPartitionAndCheckTopicId(tp)
-      // TODO: As the cf will be completed immediately when `limitBytes` set to 0 (see [[ElasticLogSegment.readAsync]]),
-      // we can avoid using `CompletableFuture` here.
-      val readCf = read(partition, tp, partitionData, 0, minOneMessage.get())
-      remainingCfArray += readCf.thenAccept(rst => {
-        result.synchronized {
-          result += (tp -> rst)
-        }
-        remainingBytes.getAndAdd(-rst.info.records.sizeInBytes)
-      })
+      try {
+        val partition = getPartitionAndCheckTopicId(tp)
+        // TODO: As the cf will be completed immediately when `limitBytes` set to 0 (see [[ElasticLogSegment.readAsync]]),
+        // we can avoid using `CompletableFuture` here.
+        val readCf = read(partition, tp, partitionData, 0, minOneMessage.get())
+        remainingCfArray += readCf.thenAccept(rst => {
+          result.synchronized {
+            result += (tp -> rst)
+          }
+          remainingBytes.getAndAdd(-rst.info.records.sizeInBytes)
+        })
+      } catch {
+        case e: Throwable =>
+          val readResult = exception2LogReadResult(e, tp, partitionData, 0)
+          handleReadResult(tp, readResult)
+      }
+
       partitionIndex += 1
     }
     CompletableFuture.allOf(remainingCfArray.toArray: _*).get()
@@ -2347,6 +2428,7 @@ class ReplicaManager(val config: KafkaConfig,
       partitionsWithOfflineFutureReplica.foreach(partition => partition.removeFutureLocalReplica(deleteFromLogDir = false))
       newOfflinePartitions.foreach { topicPartition =>
         markPartitionOffline(topicPartition)
+        brokerTopicStats.removeMetrics(topicPartition)
       }
       newOfflinePartitions.map(_.topic).foreach { topic: String =>
         maybeRemoveTopicMetrics(topic)
@@ -2389,6 +2471,7 @@ class ReplicaManager(val config: KafkaConfig,
       // These partitions should first be made offline to remove topic metrics.
       newOfflinePartitions.foreach { topicPartition =>
         markPartitionOffline(topicPartition)
+        brokerTopicStats.removeMetrics(topicPartition)
       }
       newOfflinePartitions.map(_.topic).foreach { topic: String =>
         maybeRemoveTopicMetrics(topic)

@@ -13,16 +13,36 @@ rules:
         type: counter
         desc: The number of messages received by the broker
 
+  - bean: kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec
+    metricAttribute:
+      direction: const(in)
+    mapping:
+      Count:
+        metric: kafka.broker.network.io
+        type: counter
+        desc: The bytes received or sent by the broker
+        unit: By
+
+  - bean: kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec
+    metricAttribute:
+      direction: const(out)
+    mapping:
+      Count:
+        metric: kafka.broker.network.io
+        type: counter
+        desc: The bytes received or sent by the broker
+        unit: By
+
   - bean: kafka.server:type=BrokerTopicPartitionMetrics,name=BytesInPerSec,topic=*,partition=*
     metricAttribute:
       topic: param(topic)
       partition: param(partition)
-      direction: const(int)
+      direction: const(in)
     mapping:
       Count:
         metric: kafka.network.io
         type: counter
-        desc: The bytes received or sent by the broker
+        desc: The bytes received or sent by the broker per topic partition
         unit: By
 
   - bean: kafka.server:type=BrokerTopicPartitionMetrics,name=BytesOutPerSec,topic=*,partition=*
@@ -34,7 +54,7 @@ rules:
       Count:
         metric: kafka.network.io
         type: counter
-        desc: The bytes received or sent by the broker
+        desc: The bytes received or sent by the broker per topic partition
         unit: By
 
   - bean: kafka.server:type=BrokerTopicMetrics,name=TotalFetchRequestsPerSec,topic=*
@@ -81,6 +101,7 @@ rules:
   - bean: kafka.network:type=RequestMetrics,name=RequestsPerSec,request=*,version=*
     metricAttribute:
       type: param(request)
+      version: param(version)
     mapping:
       Count:
         metric: kafka.request.count
@@ -102,7 +123,7 @@ rules:
       type: param(request)
     mapping:
       Count:
-        metric: kafka.request.size.total
+        metric: kafka.request.size
         type: counter
         desc: The total size of requests received by the broker
         unit: By
@@ -133,7 +154,7 @@ rules:
     unit: ms
     mapping:
       Count:
-        metric: kafka.request.time.total
+        metric: kafka.request.time
         type: counter
         desc: The total time the broker has taken to service requests
       Mean:
@@ -159,7 +180,7 @@ rules:
     unit: ms
     mapping:
       Count:
-        metric: kafka.request.queue.time.total
+        metric: kafka.request.queue.time
         type: counter
         desc: The total time the broker has taken to dequeue requests
       Mean:
@@ -174,6 +195,10 @@ rules:
         metric: kafka.request.queue.time.99p
         type: gauge
         desc: The 99th percentile time the broker has taken to dequeue requests
+      Max:
+        metric: kafka.request.queue.time.max
+        type: gauge
+        desc: The max time the broker has taken to dequeue requests
 
   - bean: kafka.network:type=RequestMetrics,name=ResponseQueueTimeMs,request=*
     metricAttribute:
@@ -181,7 +206,7 @@ rules:
     unit: ms
     mapping:
       Count:
-        metric: kafka.response.queue.time.total
+        metric: kafka.response.queue.time
         type: counter
         desc: The total time the broker has taken to dequeue responses
       Mean:
@@ -196,6 +221,10 @@ rules:
         metric: kafka.response.queue.time.99p
         type: gauge
         desc: The 99th percentile time the broker has taken to dequeue responses
+      Max:
+        metric: kafka.response.queue.time.max
+        type: gauge
+        desc: The max time the broker has taken to dequeue responses
 
   - bean: kafka.network:type=RequestChannel,name=RequestQueueSize
     mapping:
@@ -248,10 +277,20 @@ rules:
         desc: Log flush count
       50thPercentile:
         metric: kafka.logs.flush.time.50p
+        type: gauge
         desc: Log flush time - 50th percentile
       99thPercentile:
         metric: kafka.logs.flush.time.99p
+        type: gauge
         desc: Log flush time - 99th percentile
+      Mean:
+        metric: kafka.logs.flush.time.mean
+        type: gauge
+        desc: Log flush time - mean
+      Max:
+        metric: kafka.logs.flush.time.max
+        type: gauge
+        desc: Log flush time - max
 
   - bean: kafka.log.streamaspect:type=Log,name=LogEndOffset,topic=*,partition=*
     metricAttribute:
@@ -326,38 +365,3 @@ rules:
         metric: kafka.group.empty.count
         type: gauge
         desc: The number of groups that have no more members
-
-
-  # Network Metrics
-  - bean: kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*
-    metricAttribute:
-      listener: param(listener)
-      network_processor: param(networkProcessor)
-    mapping:
-      connection-count:
-        metric: kafka.server.connection.count
-        type: gauge
-        desc: Current number of created connections
-      connection-creation-rate:
-        metric: kafka.server.connection.creation.rate
-        type: gauge
-        desc: Number of new connections per second
-
-  - bean: kafka.network:type=SocketServer,name=NetworkProcessorAvgIdlePercent
-    mapping:
-      Value:
-        metric: kafka.network.threads.idle.rate
-        type: gauge
-        desc: The fraction of time the network threads are idle
-
-  - bean: kafka.server:type=KafkaRequestHandlerPool,name=RequestHandlerAvgIdlePercent
-    mapping:
-      Count:
-        metric: kafka.io.threads.idle.time.total
-        type: counter
-        desc: The total time the io threads are idle
-        unit: ns
-      OneMinuteRate:
-        metric: kafka.io.threads.idle.rate.1m
-        type: gauge
-        desc: The fraction of time the io threads are idle for the last minute

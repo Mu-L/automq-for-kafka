@@ -151,6 +151,15 @@ public class TransactionalMessageCopier {
                 .dest("transactionalId")
                 .help("The transactionalId to assign to the producer");
 
+        parser.addArgument("--producer-block-timeout-ms")
+                .action(store())
+                .required(false)
+                .setDefault(60000)
+                .type(Integer.class)
+                .metavar("PRODUCER-BLOCK-TIMEOUT-MS")
+                .dest("producerBlockTimeoutMs")
+                .help("The maximum time in milliseconds the producer will block for during a send request.");
+
         parser.addArgument("--enable-random-aborts")
                 .action(storeTrue())
                 .type(Boolean.class)
@@ -173,6 +182,15 @@ public class TransactionalMessageCopier {
                 .dest("useGroupMetadata")
                 .help("Whether to use the new transactional commit API with group metadata");
 
+        parser.addArgument("--consumer-default-api-timeout-ms")
+                .action(store())
+                .required(false)
+                .setDefault(60000)
+                .type(Integer.class)
+                .metavar("CONSUMER-DEFAULT-API-TIMEOUT-MS")
+                .dest("consumerDefaultApiTimeoutMs")
+                .help("The default API timeout in milliseconds for the consumer.");
+
         return parser;
     }
 
@@ -190,6 +208,7 @@ public class TransactionalMessageCopier {
         props.put(ProducerConfig.BATCH_SIZE_CONFIG, "512");
         props.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, "5");
         props.put(ProducerConfig.TRANSACTION_TIMEOUT_CONFIG, parsedArgs.getInt("transactionTimeout"));
+        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, parsedArgs.getInt("producerBlockTimeoutMs"));
 
         return new KafkaProducer<>(props);
     }
@@ -214,6 +233,7 @@ public class TransactionalMessageCopier {
                 "org.apache.kafka.common.serialization.StringDeserializer");
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
                 "org.apache.kafka.common.serialization.StringDeserializer");
+        props.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, parsedArgs.getInt("consumerDefaultApiTimeoutMs"));
 
         return new KafkaConsumer<>(props);
     }
@@ -397,7 +417,7 @@ public class TransactionalMessageCopier {
                     } catch (ProducerFencedException e) {
                         throw new KafkaException(String.format("The transactional.id %s has been claimed by another process", transactionalId), e);
                     } catch (KafkaException e) {
-                        log.debug("Aborting transaction after catching exception", e);
+                        log.error("Aborting transaction after catching exception", e);
                         abortTransactionAndResetPosition(producer, consumer);
                     }
                 }

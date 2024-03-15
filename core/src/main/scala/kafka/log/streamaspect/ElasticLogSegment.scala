@@ -18,6 +18,7 @@
 package kafka.log.streamaspect
 
 import kafka.log._
+import kafka.log.streamaspect.cache.FileCache
 import kafka.server.epoch.LeaderEpochFileCache
 import kafka.server.{FetchDataInfo, LogOffsetMetadata}
 import kafka.utils.{CoreUtils, nonthreadsafe, threadsafe}
@@ -172,6 +173,7 @@ class ElasticLogSegment(val _meta: ElasticStreamSegmentMeta,
                     maxPosition: Long = size,
                     maxOffset: Long = Long.MaxValue,
                          minOneMessage: Boolean = false): CompletableFuture[FetchDataInfo] = {
+    // TODO: isolate the log clean read to another method
     if (maxSize < 0)
       return CompletableFuture.failedFuture(new IllegalArgumentException(s"Invalid max size $maxSize for log read from segment $log"))
     // Note that relativePositionInSegment here is a fake value. There are no 'position' in elastic streams.
@@ -183,7 +185,7 @@ class ElasticLogSegment(val _meta: ElasticStreamSegmentMeta,
     // 'minOneMessage' is also not used because we always read at least one message ('maxSize' is just a hint in ES SDK).
     _log.read(startOffset, maxOffset, maxSize)
       .thenApply(records => {
-        if (records == null) {
+        if (ReadHint.isReadAll() && records.sizeInBytes() == 0) {
           // After topic compact, the read request might be out of range. Segment should return null and log will retry read next segment.
           null
         } else {
@@ -421,14 +423,17 @@ class ElasticLogSegment(val _meta: ElasticStreamSegmentMeta,
 }
 
 object ElasticLogSegment {
+  var TxnCache: FileCache = _
+  var TimeCache: FileCache = _
+
   def apply(dir: File, meta: ElasticStreamSegmentMeta, sm: ElasticStreamSliceManager, logConfig: LogConfig,
             time: Time, segmentEventListener: ElasticLogSegmentEventListener, logIdent: String = ""): ElasticLogSegment = {
     val baseOffset = meta.baseOffset
     val suffix = meta.streamSuffix
     val log = new ElasticLogFileRecords(sm.loadOrCreateSlice("log" + suffix, meta.log), baseOffset, meta.logSize())
     val lastTimeIndexEntry = meta.timeIndexLastEntry().toTimestampOffset
-    val timeIndex = new ElasticTimeIndex(UnifiedLog.timeIndexFile(dir, baseOffset, suffix), new StreamSliceSupplier(sm, "tim" + suffix, meta.time), baseOffset, logConfig.maxIndexSize, lastTimeIndexEntry)
-    val txnIndex = new ElasticTransactionIndex(UnifiedLog.transactionIndexFile(dir, baseOffset, suffix), new StreamSliceSupplier(sm, "txn" + suffix, meta.txn), baseOffset)
+    val timeIndex = new ElasticTimeIndex(UnifiedLog.timeIndexFile(dir, baseOffset, suffix), new DefaultStreamSliceSupplier(sm, "tim" + suffix, meta.time), baseOffset, logConfig.maxIndexSize, lastTimeIndexEntry, TimeCache)
+    val txnIndex = new ElasticTransactionIndex(UnifiedLog.transactionIndexFile(dir, baseOffset, suffix), new DefaultStreamSliceSupplier(sm, "txn" + suffix, meta.txn), baseOffset, TxnCache)
 
     new ElasticLogSegment(meta, log, timeIndex, txnIndex, baseOffset, logConfig.indexInterval, logConfig.segmentJitterMs, time, segmentEventListener, logIdent)
   }

@@ -1,24 +1,19 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Copyright 2024, AutoMQ CO.,LTD.
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * Use of this software is governed by the Business Source License
+ * included in the file BSL.md
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * As of the Change Date specified in that file, in accordance with
+ * the Business Source License, use of this software will be governed
+ * by the Apache License, Version 2.0
  */
 
 package kafka.autobalancer.model;
 
 import com.automq.stream.utils.LogContext;
 import kafka.autobalancer.common.AutoBalancerConstants;
+import org.apache.kafka.server.metrics.s3stream.S3StreamKafkaMetricsManager;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Utils;
@@ -58,6 +53,39 @@ public class ClusterModel {
             logContext = new LogContext("[ClusterModel]");
         }
         logger = logContext.logger(AutoBalancerConstants.AUTO_BALANCER_LOGGER_CLAZZ);
+        S3StreamKafkaMetricsManager.setAutoBalancerMetricsTimeMapSupplier(this::calculateBrokerLatestMetricsTime);
+    }
+
+    Map<Integer, Long> calculateBrokerLatestMetricsTime() {
+        clusterLock.lock();
+        try {
+            Map<Integer, Long> metricsTimeMap = new HashMap<>();
+            // Record latest broker metric time
+            for (Map.Entry<Integer, BrokerUpdater> entry : brokerMap.entrySet()) {
+                int brokerId = entry.getKey();
+                BrokerUpdater brokerUpdater = entry.getValue();
+                if (brokerUpdater.isValidInstance()) {
+                    metricsTimeMap.put(brokerId, brokerUpdater.instance().getTimestamp());
+                }
+            }
+            // Record minimum latest topic partition metric time
+            for (Map.Entry<Integer, Map<TopicPartition, TopicPartitionReplicaUpdater>> entry : brokerReplicaMap.entrySet()) {
+                int brokerId = entry.getKey();
+                if (!metricsTimeMap.containsKey(brokerId)) {
+                    continue;
+                }
+                Map<TopicPartition, TopicPartitionReplicaUpdater> replicaMap = entry.getValue();
+                for (Map.Entry<TopicPartition, TopicPartitionReplicaUpdater> tpEntry : replicaMap.entrySet()) {
+                    TopicPartitionReplicaUpdater replicaUpdater = tpEntry.getValue();
+                    if (replicaUpdater.isValidInstance()) {
+                        metricsTimeMap.put(brokerId, Math.min(metricsTimeMap.get(brokerId), replicaUpdater.instance().getTimestamp()));
+                    }
+                }
+            }
+            return metricsTimeMap;
+        } finally {
+            clusterLock.unlock();
+        }
     }
 
     public ClusterModelSnapshot snapshot() {
@@ -71,8 +99,9 @@ public class ClusterModel {
             long now = System.currentTimeMillis();
             for (Map.Entry<Integer, BrokerUpdater> entry : brokerMap.entrySet()) {
                 int brokerId = entry.getKey();
-                BrokerUpdater.Broker broker = (BrokerUpdater.Broker) entry.getValue().get();
+                BrokerUpdater.Broker broker = (BrokerUpdater.Broker) entry.getValue().get(now - maxToleratedMetricsDelay);
                 if (broker == null) {
+                    logger.warn("Broker {} metrics is out of sync, will be ignored in this round", brokerId);
                     continue;
                 }
                 if (excludedBrokerIds.contains(brokerId)) {
@@ -273,7 +302,6 @@ public class ClusterModel {
             }
             int oldBrokerId = topicPartitionReplicaMap.get(topicName).getOrDefault(partitionId, -1);
             if (oldBrokerId == brokerId) {
-                logger.warn("Reassign partition {} for topic {} on same broker {}", partitionId, topicName, oldBrokerId);
                 return;
             }
             if (oldBrokerId != -1) {

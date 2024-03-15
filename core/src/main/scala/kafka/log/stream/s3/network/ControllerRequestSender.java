@@ -1,18 +1,12 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Copyright 2024, AutoMQ CO.,LTD.
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * Use of this software is governed by the Business Source License
+ * included in the file BSL.md
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * As of the Change Date specified in that file, in accordance with
+ * the Business Source License, use of this software will be governed
+ * by the Apache License, Version 2.0
  */
 
 package kafka.log.stream.s3.network;
@@ -114,8 +108,7 @@ public class ControllerRequestSender {
         channelManager.sendRequest(requestBuilder, new ControllerRequestCompletionHandler() {
             @Override
             public void onTimeout() {
-                // TODO: add timeout retry policy
-                LOGGER.error("Timeout while creating stream");
+                LOGGER.warn("Timeout while creating stream");
                 ctx.onError(new TimeoutException("Timeout while creating stream"));
             }
 
@@ -162,7 +155,7 @@ public class ControllerRequestSender {
         public RequestAccumulator() {
         }
 
-        void send(RequestTask task) {
+        synchronized void send(RequestTask task) {
             if (task != null) {
                 requestQueue.add(task);
             }
@@ -172,9 +165,6 @@ public class ControllerRequestSender {
         }
 
         void send0() {
-            if (requestQueue.isEmpty()) {
-                return;
-            }
             List<RequestTask> inflight = new ArrayList<>();
             requestQueue.drainTo(inflight);
             Builder builder = inflight.get(0).request.toRequestBuilder();
@@ -182,6 +172,14 @@ public class ControllerRequestSender {
             RequestCtx requestCtx = new RequestCtx() {
                 @Override
                 void onSuccess(AbstractResponse response) {
+                    try {
+                        onSuccess0(response);
+                    } catch (Exception e) {
+                        LOGGER.error("[UNEXPECTED]", e);
+                    }
+                }
+
+                void onSuccess0(AbstractResponse response) {
                     if (!(response instanceof AbstractBatchResponse)) {
                         LOGGER.error("Unexpected response type: {} while sending request: {}",
                                 response.getClass().getSimpleName(), builder);
@@ -215,6 +213,14 @@ public class ControllerRequestSender {
 
                 @Override
                 void onError(Throwable e) {
+                    try {
+                        onError0(e);
+                    } catch (Exception ex) {
+                        LOGGER.error("[UNEXPECTED]", ex);
+                    }
+                }
+
+                void onError0(Throwable e) {
                     if (e instanceof TimeoutException) {
                         RequestAccumulator.this.inflight.compareAndSet(true, false);
                         inflight.forEach(ControllerRequestSender.this::retryTask);
@@ -268,6 +274,14 @@ public class ControllerRequestSender {
 
         public void completeExceptionally(Throwable throwable) {
             future.completeExceptionally(throwable);
+        }
+
+        @Override
+        public String toString() {
+            return "RequestTask{" +
+                    "apiKey=" + request.apiKey() +
+                    ", sendCount=" + sendCount +
+                    '}';
         }
 
     }

@@ -1,18 +1,12 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * Copyright 2024, AutoMQ CO.,LTD.
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * Use of this software is governed by the Business Source License
+ * included in the file BSL.md
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * As of the Change Date specified in that file, in accordance with
+ * the Business Source License, use of this software will be governed
+ * by the Apache License, Version 2.0
  */
 
 package kafka.autobalancer.goals;
@@ -24,14 +18,13 @@ import kafka.autobalancer.common.AutoBalancerConstants;
 import kafka.autobalancer.common.Resource;
 import kafka.autobalancer.model.BrokerUpdater;
 import kafka.autobalancer.model.ClusterModelSnapshot;
+import kafka.autobalancer.model.ModelUtils;
 import kafka.autobalancer.model.TopicPartitionReplicaUpdater;
 import org.slf4j.Logger;
 
-import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,63 +35,43 @@ public abstract class AbstractResourceGoal extends AbstractGoal {
 
     protected abstract Resource resource();
 
-    private Optional<Action> trySwapPartitionOut(ClusterModelSnapshot cluster,
-                                                 TopicPartitionReplicaUpdater.TopicPartitionReplica srcReplica,
-                                                 BrokerUpdater.Broker srcBroker,
-                                                 List<BrokerUpdater.Broker> candidates,
-                                                 Collection<Goal> goalsByPriority) {
+    protected Optional<Action> trySwapPartitionOut(ClusterModelSnapshot cluster,
+                                                   TopicPartitionReplicaUpdater.TopicPartitionReplica srcReplica,
+                                                   BrokerUpdater.Broker srcBroker,
+                                                   List<BrokerUpdater.Broker> candidates,
+                                                   Collection<Goal> goalsByPriority) {
         List<Map.Entry<Action, Double>> candidateActionScores = new ArrayList<>();
         for (BrokerUpdater.Broker candidate : candidates) {
             for (TopicPartitionReplicaUpdater.TopicPartitionReplica candidateReplica : cluster.replicasFor(candidate.getBrokerId())) {
                 if (candidate.load(resource()) > srcReplica.load(resource())) {
                     continue;
                 }
-                boolean isHardGoalViolated = false;
                 Action action = new Action(ActionType.SWAP, srcReplica.getTopicPartition(), srcBroker.getBrokerId(),
                         candidate.getBrokerId(), candidateReplica.getTopicPartition());
-                Map<Goal, Double> scoreMap = new HashMap<>();
-                for (Goal goal : goalsByPriority) {
-                    double score = goal.actionAcceptanceScore(action, cluster);
-                    if (goal.type() == GoalType.HARD && score == 0) {
-                        isHardGoalViolated = true;
-                        break;
-                    }
-                    scoreMap.put(goal, score);
-                }
-                if (!isHardGoalViolated) {
-                    candidateActionScores.add(new AbstractMap.SimpleEntry<>(action, normalizeGoalsScore(scoreMap)));
-                }
+                calculateCandidateActionScores(candidateActionScores, goalsByPriority, action, cluster);
             }
         }
-        LOGGER.debug("All possible action score: {}", candidateActionScores);
+        LOGGER.debug("try swap partition {} out for broker {}, all possible action score: {} on goal {}", srcReplica.getTopicPartition(),
+                srcBroker.getBrokerId(), candidateActionScores, name());
         return getAcceptableAction(candidateActionScores);
     }
 
-    private Optional<Action> tryMovePartitionOut(ClusterModelSnapshot cluster,
-                                                 TopicPartitionReplicaUpdater.TopicPartitionReplica replica,
-                                                 BrokerUpdater.Broker srcBroker,
-                                                 List<BrokerUpdater.Broker> candidates,
-                                                 Collection<Goal> goalsByPriority) {
-        List<Map.Entry<Action, Double>> candidateActionScores = new ArrayList<>();
-        for (BrokerUpdater.Broker candidate : candidates) {
-            boolean isHardGoalViolated = false;
-            Action action = new Action(ActionType.MOVE, replica.getTopicPartition(), srcBroker.getBrokerId(), candidate.getBrokerId());
-            Map<Goal, Double> scoreMap = new HashMap<>();
-            for (Goal goal : goalsByPriority) {
-                double score = goal.actionAcceptanceScore(action, cluster);
-                if (goal.type() == GoalType.HARD && score == 0) {
-                    isHardGoalViolated = true;
-                    break;
-                }
-                scoreMap.put(goal, score);
-            }
-            if (isHardGoalViolated) {
+    @Override
+    protected boolean moveReplica(Action action, ClusterModelSnapshot cluster, BrokerUpdater.Broker src, BrokerUpdater.Broker dest) {
+        TopicPartitionReplicaUpdater.TopicPartitionReplica srcReplica = cluster.replica(action.getSrcBrokerId(), action.getSrcTopicPartition());
+        switch (action.getType()) {
+            case MOVE:
+                ModelUtils.moveReplicaLoad(src, dest, srcReplica);
                 break;
-            }
-            candidateActionScores.add(new AbstractMap.SimpleEntry<>(action, normalizeGoalsScore(scoreMap)));
+            case SWAP:
+                TopicPartitionReplicaUpdater.TopicPartitionReplica destReplica = cluster.replica(action.getDestBrokerId(), action.getDestTopicPartition());
+                ModelUtils.moveReplicaLoad(src, dest, srcReplica);
+                ModelUtils.moveReplicaLoad(dest, src, destReplica);
+                break;
+            default:
+                return false;
         }
-        LOGGER.debug("All possible action score: {} for {}", candidateActionScores, name());
-        return getAcceptableAction(candidateActionScores);
+        return true;
     }
 
     /**
